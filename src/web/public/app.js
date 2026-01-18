@@ -93,10 +93,12 @@ class ClaudemanApp {
     this.fitAddon.fit();
 
     // Welcome message
-    this.terminal.writeln('\x1b[1;36m╔═══════════════════════════════════════════════════════════╗');
-    this.terminal.writeln('║           \x1b[1;33m⚡ Claudeman Terminal \x1b[1;36m                          ║');
-    this.terminal.writeln('║           \x1b[0;90mRun prompts to see output here\x1b[1;36m                  ║');
-    this.terminal.writeln('╚═══════════════════════════════════════════════════════════╝\x1b[0m');
+    this.terminal.writeln('\x1b[1;36m╔═══════════════════════════════════════════════════════════════╗');
+    this.terminal.writeln('║              \x1b[1;33m⚡ Claudeman Terminal \x1b[1;36m                           ║');
+    this.terminal.writeln('╠═══════════════════════════════════════════════════════════════╣');
+    this.terminal.writeln('║  \x1b[0;90mCtrl+Enter\x1b[1;36m  Quick Start          \x1b[0;90mCtrl+K\x1b[1;36m  Kill All Sessions  ║');
+    this.terminal.writeln('║  \x1b[0;90mCtrl+L\x1b[1;36m      Clear Terminal        \x1b[0;90mCtrl+1/2/3\x1b[1;36m  Switch Tabs  ║');
+    this.terminal.writeln('╚═══════════════════════════════════════════════════════════════╝\x1b[0m');
     this.terminal.writeln('');
 
     // Handle resize
@@ -147,6 +149,46 @@ class ClaudemanApp {
     // Quick Start case select
     document.getElementById('quickStartCase').addEventListener('change', (e) => {
       this.handleQuickStartSelect(e.target.value);
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Escape to close modals
+      if (e.key === 'Escape') {
+        this.closeCaseSelector();
+      }
+
+      // Ctrl/Cmd + Enter to quick start (when not in terminal)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        this.quickStart();
+      }
+
+      // Ctrl/Cmd + K to kill all sessions
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        this.killAllSessions();
+      }
+
+      // Ctrl/Cmd + L to clear terminal
+      if ((e.ctrlKey || e.metaKey) && e.key === 'l' && document.activeElement !== document.getElementById('promptInput')) {
+        e.preventDefault();
+        this.clearTerminal();
+      }
+
+      // Ctrl/Cmd + 1/2/3 to switch tabs
+      if ((e.ctrlKey || e.metaKey) && e.key === '1') {
+        e.preventDefault();
+        this.switchTab('run');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '2') {
+        e.preventDefault();
+        this.switchTab('cases');
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '3') {
+        e.preventDefault();
+        this.switchTab('settings');
+      }
     });
   }
 
