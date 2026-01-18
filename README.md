@@ -4,12 +4,16 @@ A Claude Code session manager with an autonomous Ralph Loop for task assignment 
 
 ## Features
 
-- **Web Interface**: Beautiful, responsive web UI for managing sessions and running prompts
-- **Session Management**: Spawn and manage multiple Claude CLI sessions as subprocesses
+- **Web Interface**: Beautiful, responsive web UI with interactive terminal powered by xterm.js
+- **Session Management**: Spawn and manage multiple Claude CLI sessions as PTY subprocesses
+- **Interactive Terminal**: Full terminal access with resize support and buffer persistence for reconnections
+- **Respawn Controller**: Autonomous state machine that cycles sessions (update docs → /clear → /init) with configurable prompts
 - **Timed Runs**: Schedule Claude to work for a specific duration with live countdown
-- **Real-time Output**: Stream Claude's responses in real-time via Server-Sent Events
+- **Real-time Output**: Stream Claude's responses in real-time via Server-Sent Events (21 event types)
 - **Task Queue**: Priority-based task queue with dependency support
 - **Ralph Loop**: Autonomous control loop that assigns tasks to idle sessions and monitors completion
+- **Time-Aware Loops**: Extended work sessions with auto-generated follow-up tasks when minimum duration not reached
+- **Case Management**: Create project workspaces with auto-generated CLAUDE.md templates
 - **Cost Tracking**: Track total API costs across all sessions
 - **State Persistence**: All state persisted to `~/.claudeman/state.json`
 
@@ -33,11 +37,14 @@ claudeman web
 ```
 
 The web interface provides:
+- **Interactive Terminal**: Full xterm.js terminal with resize support
 - **Prompt Input**: Enter prompts and optionally set a working directory
 - **Duration Timer**: Set duration in minutes for timed runs (0 = single run)
 - **Live Output**: See Claude's response in real-time as it streams
 - **Countdown**: Large timer display when running timed jobs
-- **Session Monitoring**: View all active sessions at the bottom panel
+- **Session Monitoring**: View all active sessions with status indicators
+- **Respawn Controls**: Start/stop respawn controller with configurable settings
+- **Case Management**: Create new project workspaces with CLAUDE.md templates
 
 ### CLI Usage
 
@@ -126,6 +133,34 @@ claudeman ralph stop
 
 # Check loop status
 claudeman ralph status
+```
+
+### Respawn Controller (Web Interface)
+
+The respawn controller keeps interactive sessions productive by automatically cycling through update prompts:
+
+1. Detects when session goes idle (prompt character visible, no activity)
+2. Sends configured update prompt (default: "update all the docs and CLAUDE.md")
+3. Sends `/clear` command to reset context
+4. Sends `/init` to reinitialize
+5. Repeats
+
+**Configuration via API:**
+```bash
+# Start respawn with custom config
+curl -X POST localhost:3000/api/sessions/:id/respawn/start \
+  -H "Content-Type: application/json" \
+  -d '{"config": {"idleTimeoutMs": 10000, "updatePrompt": "run tests and fix issues"}}'
+
+# Update config on running respawn
+curl -X PUT localhost:3000/api/sessions/:id/respawn/config \
+  -H "Content-Type: application/json" \
+  -d '{"updatePrompt": "refactor the API layer"}'
+```
+
+**State Machine:**
+```
+WATCHING → SENDING_UPDATE → WAITING_UPDATE → SENDING_CLEAR → WAITING_CLEAR → SENDING_INIT → WAITING_INIT → WATCHING
 ```
 
 ### Utility
