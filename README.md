@@ -86,7 +86,21 @@ The Quick Start button will:
 | `Ctrl+L` | Clear terminal |
 | `Ctrl+1/2/3` | Switch tabs (Run/Cases/Settings) |
 | `Ctrl++/-` | Increase/decrease font size |
+| `Ctrl+?` | Show keyboard shortcuts help |
 | `Escape` | Close modals |
+
+#### Additional Features
+
+- **Terminal Font Controls**: Adjust font size with A+/A- buttons or Ctrl++/-
+- **Copy Terminal Output**: Copy all terminal content to clipboard
+- **Session Duration**: View how long each session has been running
+- **Working Directory Display**: See the project folder for each session
+- **Session Count**: Header displays total active sessions
+- **Toast Notifications**: Non-intrusive status updates and alerts
+- **Mobile Support**: Responsive design optimized for tablets and phones
+- **Help Modal**: Press ? button or Ctrl+? for keyboard shortcuts reference
+- **Reconnect Button**: Manually reconnect if connection is lost
+- **Confirmation Dialogs**: Warns before starting long timed runs (30+ minutes)
 
 ### CLI Usage
 
