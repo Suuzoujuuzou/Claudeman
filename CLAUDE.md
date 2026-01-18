@@ -18,6 +18,13 @@ npm run clean          # Remove dist/
 npm link               # Make 'claudeman' globally available
 claudeman web          # Start web interface on port 3000
 claudeman web -p 8080  # Custom port
+
+# Testing
+npm run test           # Run all tests once
+npm run test:watch     # Run tests in watch mode
+npm run test:coverage  # Run tests with coverage report
+npx vitest run test/session.test.ts           # Run single test file
+npx vitest run -t "should create session"     # Run tests matching pattern
 ```
 
 ## Architecture
