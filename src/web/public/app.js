@@ -15,7 +15,26 @@ class ClaudemanApp {
     this.respawnStatus = {};      // Respawn status per session
     this.respawnEnabled = false;  // Whether respawn is enabled for new sessions (disabled by default)
 
+    // Terminal write batching for performance
+    this.pendingWrites = '';
+    this.writeFrameScheduled = false;
+
     this.init();
+  }
+
+  // Batch terminal writes using requestAnimationFrame for smooth rendering
+  batchTerminalWrite(data) {
+    this.pendingWrites += data;
+    if (!this.writeFrameScheduled) {
+      this.writeFrameScheduled = true;
+      requestAnimationFrame(() => {
+        if (this.pendingWrites && this.terminal) {
+          this.terminal.write(this.pendingWrites);
+          this.pendingWrites = '';
+        }
+        this.writeFrameScheduled = false;
+      });
+    }
   }
 
   init() {
@@ -195,10 +214,10 @@ class ClaudemanApp {
       this.renderSessions();
     });
 
-    // Handle raw terminal data from PTY
+    // Handle raw terminal data from PTY - use batched writes for performance
     this.eventSource.addEventListener('session:terminal', (e) => {
       const data = JSON.parse(e.data);
-      this.terminal.write(data.data);
+      this.batchTerminalWrite(data.data);
     });
 
     this.eventSource.addEventListener('session:output', (e) => {
@@ -932,7 +951,7 @@ class ClaudemanApp {
           <span class="session-respawn-dot ${respawn.state === 'stopped' ? 'stopped' : ''}"></span>
           <span class="session-respawn-state">${respawn.state.replace(/_/g, ' ')}</span>
           <span class="session-respawn-actions">
-            <button class="btn btn-sm" onclick="app.stopRespawnForSession('${s.id}')">Stop</button>
+            <button class="btn btn-sm" onclick="event.stopPropagation(); app.stopRespawnForSession('${s.id}')">Stop</button>
           </span>
         </div>
       ` : `
@@ -940,24 +959,77 @@ class ClaudemanApp {
           <span class="session-respawn-dot stopped"></span>
           <span class="session-respawn-state">No respawn</span>
           <span class="session-respawn-actions">
-            <button class="btn btn-sm" onclick="app.startRespawnForSession('${s.id}')">Start</button>
+            <button class="btn btn-sm" onclick="event.stopPropagation(); app.startRespawnForSession('${s.id}')">Start</button>
           </span>
         </div>
       `;
 
+      // Resource usage display
+      const bufferStats = s.bufferStats || {};
+      const terminalSize = bufferStats.terminalBufferSize || 0;
+      const textSize = bufferStats.textOutputSize || 0;
+      const msgCount = bufferStats.messageCount || 0;
+      const totalMemory = terminalSize + textSize;
+
+      // Color coding based on usage
+      const memoryPercent = bufferStats.maxTerminalBuffer ?
+        (terminalSize / bufferStats.maxTerminalBuffer * 100) : 0;
+      const memoryClass = memoryPercent > 80 ? 'high' : memoryPercent > 50 ? 'medium' : 'low';
+
+      const resourceHtml = `
+        <div class="session-resources">
+          <div class="resource-item">
+            <span class="resource-label">Memory:</span>
+            <span class="resource-value ${memoryClass}">${this.formatBytes(totalMemory)}</span>
+          </div>
+          <div class="resource-item">
+            <span class="resource-label">Messages:</span>
+            <span class="resource-value">${msgCount}</span>
+          </div>
+        </div>
+      `;
+
       return `
-        <div class="session-card" data-session="${s.id}">
+        <div class="session-card ${this.activeSessionId === s.id ? 'active' : ''}" data-session="${s.id}" onclick="app.selectSession('${s.id}')">
           <div class="session-card-header">
             <div class="session-status">
               <span class="session-status-dot ${s.status}"></span>
               <span>${s.id.slice(0, 8)}</span>
             </div>
-            <span class="session-cost">$${(s.totalCost || 0).toFixed(4)}</span>
+            <div class="session-actions">
+              <span class="session-cost">$${(s.totalCost || 0).toFixed(4)}</span>
+              <button class="btn btn-xs btn-danger" onclick="event.stopPropagation(); app.deleteSession('${s.id}')" title="Kill session">✕</button>
+            </div>
           </div>
+          ${resourceHtml}
           ${respawnHtml}
         </div>
       `;
     }).join('');
+  }
+
+  // Select a session to view its terminal
+  selectSession(sessionId) {
+    this.activeSessionId = sessionId;
+    this.renderSessions();
+
+    // Load the session's terminal buffer
+    this.loadSessionTerminal(sessionId);
+  }
+
+  // Load terminal buffer for a session
+  async loadSessionTerminal(sessionId) {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/terminal`);
+      const data = await res.json();
+      if (data.terminalBuffer) {
+        this.terminal.clear();
+        this.terminal.writeln(`\x1b[90m--- Session ${sessionId.slice(0, 8)} terminal ---\x1b[0m`);
+        this.terminal.write(data.terminalBuffer);
+      }
+    } catch (err) {
+      console.error('Failed to load terminal buffer:', err);
+    }
   }
 
   async stopRespawnForSession(sessionId) {
@@ -972,6 +1044,76 @@ class ClaudemanApp {
     } catch (err) {
       this.terminal.writeln(`\x1b[1;31m❌ Error stopping respawn: ${err.message}\x1b[0m`);
     }
+  }
+
+  // Kill all sessions
+  async killAllSessions() {
+    const count = this.sessions.size;
+    if (count === 0) {
+      this.terminal.writeln('\x1b[90mNo sessions to kill\x1b[0m');
+      return;
+    }
+
+    if (!confirm(`Kill all ${count} session(s)? This will stop all running Claude processes.`)) {
+      return;
+    }
+
+    this.terminal.writeln(`\x1b[1;33m⚠ Killing ${count} session(s)...\x1b[0m`);
+
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.terminal.writeln(`\x1b[1;32m✓ Killed ${data.data.killed} session(s)\x1b[0m`);
+        this.sessions.clear();
+        this.activeSessionId = null;
+        this.respawnStatus = {};
+        this.hideRespawnBanner();
+        this.renderSessions();
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err) {
+      this.terminal.writeln(`\x1b[1;31m❌ Error: ${err.message}\x1b[0m`);
+    }
+  }
+
+  // Kill a single session
+  async deleteSession(sessionId) {
+    if (!confirm(`Kill session ${sessionId.slice(0, 8)}?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.terminal.writeln(`\x1b[1;32m✓ Session ${sessionId.slice(0, 8)} killed\x1b[0m`);
+        this.sessions.delete(sessionId);
+        if (this.activeSessionId === sessionId) {
+          this.activeSessionId = null;
+        }
+        delete this.respawnStatus[sessionId];
+        this.renderSessions();
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err) {
+      this.terminal.writeln(`\x1b[1;31m❌ Error: ${err.message}\x1b[0m`);
+    }
+  }
+
+  // Format bytes for display
+  formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
   updateSessionOutput(sessionId, text) {

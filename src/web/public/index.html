@@ -242,9 +242,14 @@
 
     <!-- Sessions Panel (collapsible) -->
     <aside class="sessions-panel" id="sessionsPanel">
-      <div class="sessions-header" onclick="app.toggleSessions()">
-        <h3>Sessions <span class="session-count" id="sessionCount">0</span></h3>
-        <span class="toggle-icon" id="toggleIcon">▼</span>
+      <div class="sessions-header">
+        <div class="sessions-header-left" onclick="app.toggleSessions()">
+          <h3>Sessions <span class="session-count" id="sessionCount">0</span></h3>
+          <span class="toggle-icon" id="toggleIcon">▼</span>
+        </div>
+        <button class="btn btn-sm btn-danger kill-all-btn" onclick="event.stopPropagation(); app.killAllSessions()" title="Kill all sessions">
+          ✕ Kill All
+        </button>
       </div>
       <div class="sessions-list" id="sessionsList"></div>
     </aside>
