@@ -13,7 +13,7 @@ class ClaudemanApp {
     this.fitAddon = null;
     this.activeSessionId = null;  // Currently active interactive session
     this.respawnStatus = {};      // Respawn status per session
-    this.respawnEnabled = true;   // Whether respawn is enabled for new sessions
+    this.respawnEnabled = false;  // Whether respawn is enabled for new sessions (disabled by default)
 
     this.init();
   }
@@ -23,6 +23,7 @@ class ClaudemanApp {
     this.connectSSE();
     this.loadState();
     this.loadCases();
+    this.loadQuickStartCases();
     this.startTimerUpdates();
     this.setupEventListeners();
 
@@ -122,6 +123,11 @@ class ClaudemanApp {
     document.getElementById('durationSelect').addEventListener('change', (e) => {
       const customGroup = document.getElementById('customDurationGroup');
       customGroup.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    });
+
+    // Quick Start case select
+    document.getElementById('quickStartCase').addEventListener('change', (e) => {
+      this.handleQuickStartSelect(e.target.value);
     });
   }
 
@@ -271,6 +277,7 @@ class ClaudemanApp {
 
     this.eventSource.addEventListener('case:created', (e) => {
       this.loadCases();
+      this.loadQuickStartCases();
     });
 
     // Respawn events
@@ -399,6 +406,120 @@ class ClaudemanApp {
       this.renderCases();
     } catch (err) {
       console.error('Failed to load cases:', err);
+    }
+  }
+
+  // Quick Start
+  async loadQuickStartCases() {
+    try {
+      const res = await fetch('/api/cases');
+      const cases = await res.json();
+      const select = document.getElementById('quickStartCase');
+
+      // Preserve current selection
+      const currentValue = select.value;
+
+      // Clear and rebuild options
+      select.innerHTML = '<option value="testcase">testcase (default)</option>';
+
+      // Add existing cases (skip testcase if it exists)
+      cases.forEach(c => {
+        if (c.name !== 'testcase') {
+          const option = document.createElement('option');
+          option.value = c.name;
+          option.textContent = c.name;
+          select.appendChild(option);
+        }
+      });
+
+      // Add "Create new..." option
+      const createOption = document.createElement('option');
+      createOption.value = '__create_new__';
+      createOption.textContent = '+ Create new...';
+      select.appendChild(createOption);
+
+      // Restore selection if it still exists
+      if ([...select.options].some(o => o.value === currentValue)) {
+        select.value = currentValue;
+      }
+    } catch (err) {
+      console.error('Failed to load Quick Start cases:', err);
+    }
+  }
+
+  handleQuickStartSelect(value) {
+    if (value === '__create_new__') {
+      const newName = prompt('Enter a name for the new case:', '');
+      const select = document.getElementById('quickStartCase');
+
+      if (newName && newName.trim()) {
+        const cleanName = newName.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+        if (cleanName) {
+          // Add the new option and select it
+          const option = document.createElement('option');
+          option.value = cleanName;
+          option.textContent = cleanName;
+          // Insert before the "Create new..." option
+          select.insertBefore(option, select.lastElementChild);
+          select.value = cleanName;
+        } else {
+          select.value = 'testcase';
+        }
+      } else {
+        // Revert to default
+        select.value = 'testcase';
+      }
+    }
+  }
+
+  async quickStart() {
+    const select = document.getElementById('quickStartCase');
+    let caseName = select.value;
+
+    if (caseName === '__create_new__') {
+      caseName = 'testcase';
+    }
+
+    this.terminal.clear();
+    this.terminal.writeln('\x1b[1;32m⚡ Quick Start: Launching Claude session...\x1b[0m');
+    this.terminal.writeln(`\x1b[90mCase: ${caseName}\x1b[0m`);
+    this.terminal.writeln('');
+
+    try {
+      const res = await fetch('/api/quick-start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseName })
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        throw new Error(data.error);
+      }
+
+      this.activeSessionId = data.sessionId;
+      this.terminal.writeln(`\x1b[1;32m✓ Session started in ${data.casePath}\x1b[0m`);
+      this.terminal.writeln('');
+
+      // Reload cases in case a new one was created
+      this.loadQuickStartCases();
+      this.loadCases();
+
+      // Send initial resize
+      const dims = this.fitAddon.proposeDimensions();
+      if (dims) {
+        await fetch(`/api/sessions/${data.sessionId}/resize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
+        });
+      }
+
+      // Focus the terminal
+      this.terminal.focus();
+
+    } catch (err) {
+      this.terminal.writeln(`\x1b[1;31m❌ Error: ${err.message}\x1b[0m`);
     }
   }
 

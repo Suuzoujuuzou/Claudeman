@@ -77,6 +77,28 @@
 
         <!-- Run Tab -->
         <div class="tab-content active" id="tab-run">
+          <!-- Quick Start Section -->
+          <div class="quick-start-section">
+            <div class="quick-start-header">
+              <span class="quick-start-icon">&#9889;</span>
+              <span class="quick-start-title">Quick Start</span>
+            </div>
+            <div class="quick-start-controls">
+              <select id="quickStartCase" class="quick-start-select">
+                <option value="testcase">testcase (default)</option>
+              </select>
+              <button class="btn btn-quick-start" onclick="app.quickStart()">
+                <span class="btn-icon">&#9889;</span>
+                Quick Start
+              </button>
+            </div>
+            <p class="quick-start-hint">Start an interactive Claude session in one click</p>
+          </div>
+
+          <div class="section-divider">
+            <span>or configure a custom run</span>
+          </div>
+
           <div class="form-group">
             <label>Prompt</label>
             <textarea id="promptInput" placeholder="What should Claude do?" rows="6"></textarea>
@@ -116,7 +138,7 @@
           <div class="respawn-settings" id="respawnSettings">
             <div class="respawn-header">
               <label>
-                <input type="checkbox" id="respawnEnabled" checked>
+                <input type="checkbox" id="respawnEnabled">
                 Enable Auto-Respawn Loop
               </label>
               <button class="btn btn-sm" onclick="app.toggleRespawnDetails()">⚙️</button>

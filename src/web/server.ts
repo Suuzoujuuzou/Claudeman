@@ -442,6 +442,54 @@ export class WebServer extends EventEmitter {
         hasClaudeMd: existsSync(join(casePath, 'CLAUDE.md')),
       };
     });
+
+    // Quick Start: Create case (if needed) and start interactive session in one click
+    this.app.post('/api/quick-start', async (req) => {
+      const { caseName = 'testcase' } = req.body as { caseName?: string };
+
+      // Validate case name
+      if (!/^[a-zA-Z0-9_-]+$/.test(caseName)) {
+        return { success: false, error: 'Invalid case name. Use only letters, numbers, hyphens, underscores.' };
+      }
+
+      const casePath = join(casesDir, caseName);
+
+      // Create case folder and CLAUDE.md if it doesn't exist
+      if (!existsSync(casePath)) {
+        try {
+          mkdirSync(casePath, { recursive: true });
+          mkdirSync(join(casePath, 'src'), { recursive: true });
+
+          const claudeMd = generateClaudeMd(caseName, '');
+          writeFileSync(join(casePath, 'CLAUDE.md'), claudeMd);
+
+          this.broadcast('case:created', { name: caseName, path: casePath });
+        } catch (err) {
+          return { success: false, error: `Failed to create case: ${(err as Error).message}` };
+        }
+      }
+
+      // Create a new session with the case as working directory
+      const session = new Session({ workingDir: casePath });
+      this.sessions.set(session.id, session);
+      this.setupSessionListeners(session);
+      this.broadcast('session:created', session.toDetailedState());
+
+      // Start interactive mode
+      try {
+        await session.startInteractive();
+        this.broadcast('session:interactive', { id: session.id });
+
+        return {
+          success: true,
+          sessionId: session.id,
+          casePath,
+          caseName,
+        };
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
+    });
   }
 
   private setupSessionListeners(session: Session): void {
