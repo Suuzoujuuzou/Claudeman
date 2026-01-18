@@ -49,7 +49,7 @@ src/
 
 ### Key Components
 
-- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working` events. Maintains terminal buffer for reconnections.
+- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working` events. Maintains terminal buffer for reconnections. Includes buffer management for long-running sessions (12-24+ hours) with automatic trimming.
 
 - **RespawnController** (`src/respawn-controller.ts`): State machine that keeps interactive sessions productive. Detects idle → sends update prompt → `/clear` → `/init` → repeats. Configurable timeouts and prompts.
 
@@ -79,14 +79,54 @@ Claude CLI outputs newline-delimited JSON. Strip ANSI codes before parsing:
 ```typescript
 const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '');
 const msg = JSON.parse(cleanLine) as ClaudeMessage;
-// msg.type: 'system' | 'assistant' | 'result'
+// msg.type: 'system' | 'assistant' | 'user' | 'result'
 // msg.message?.content: Array<{ type: 'text', text: string }>
 // msg.total_cost_usd: number (on result messages)
+```
+
+### PTY Spawn Modes
+
+**One-shot mode** (prompt execution):
+```typescript
+pty.spawn('claude', ['-p', '--dangerously-skip-permissions', prompt], { ... })
+```
+
+**Interactive mode** (persistent terminal):
+```typescript
+pty.spawn('claude', ['--dangerously-skip-permissions'], { ... })
 ```
 
 ### Idle Detection
 
 Session detects idle by watching for prompt character (`❯` or `\u276f`) and waiting 2 seconds without activity. RespawnController uses the same patterns plus spinner characters to detect working state.
+
+### Long-Running Session Support
+
+Sessions are optimized for 12-24+ hour runs with automatic buffer management:
+
+**Buffer Limits:**
+- Terminal buffer: 5MB max, trims to 4MB when exceeded
+- Text output: 2MB max, trims to 1.5MB when exceeded
+- Messages: 1000 max, keeps most recent 800 when exceeded
+
+**Performance Optimizations:**
+- Server-side terminal batching at 60fps (16ms intervals)
+- Client-side requestAnimationFrame batching for smooth rendering
+- Buffer statistics available via session details for monitoring
+
+**Buffer Stats Response:**
+```typescript
+{
+  bufferStats: {
+    terminalBufferSize: number;  // Current terminal buffer size in bytes
+    textOutputSize: number;      // Current text output size in bytes
+    messageCount: number;        // Number of parsed messages
+    maxTerminalBuffer: number;   // Max allowed terminal buffer
+    maxTextOutput: number;       // Max allowed text output
+    maxMessages: number;         // Max allowed messages
+  }
+}
+```
 
 ### Respawn Controller State Machine
 
@@ -106,41 +146,63 @@ All events are broadcast to clients connected to `/api/events`. Event format: `{
 **Session Events:**
 | Event | Data | Description |
 |-------|------|-------------|
-| `session:output` | `{ text, raw }` | Parsed output line (ANSI stripped) |
-| `session:terminal` | `{ data }` | Raw terminal data with ANSI codes |
-| `session:message` | `{ message }` | Parsed Claude JSON message |
-| `session:completion` | `{ cost }` | Prompt completed, includes cost |
-| `session:exit` | `{ code }` | Session process exited |
-| `session:idle` | `{}` | Session is idle (prompt detected) |
-| `session:working` | `{}` | Session is working (activity detected) |
+| `session:created` | `{ session }` | New session created |
+| `session:deleted` | `{ id }` | Session removed |
+| `session:output` | `{ id, data }` | Parsed output line (ANSI stripped) |
+| `session:terminal` | `{ id, data }` | Raw terminal data with ANSI codes |
+| `session:message` | `{ id, message }` | Parsed Claude JSON message |
+| `session:running` | `{ id, prompt }` | Prompt execution started |
+| `session:interactive` | `{ id }` | Interactive mode started |
+| `session:completion` | `{ id, result, cost }` | Prompt completed, includes cost |
+| `session:exit` | `{ id, code }` | Session process exited |
+| `session:idle` | `{ id }` | Session is idle (prompt detected) |
+| `session:working` | `{ id }` | Session is working (activity detected) |
+| `session:updated` | `{ session }` | Session state updated |
+| `session:error` | `{ id, error }` | Session error occurred |
 
 **Respawn Controller Events:**
 | Event | Data | Description |
 |-------|------|-------------|
-| `respawn:stateChanged` | `{ from, to }` | State machine transition |
-| `respawn:cycleStarted` | `{ cycleNumber }` | New update cycle starting |
-| `respawn:cycleCompleted` | `{ cycleNumber }` | Update cycle finished |
-| `respawn:stepSent` | `{ step }` | Command sent (update/clear/init) |
-| `respawn:stepCompleted` | `{ step }` | Command completed |
-| `respawn:log` | `{ message, level }` | Debug/info log message |
+| `respawn:started` | `{ sessionId, status }` | Respawn controller started |
+| `respawn:stopped` | `{ sessionId }` | Respawn controller stopped |
+| `respawn:stateChanged` | `{ sessionId, state, prevState }` | State machine transition |
+| `respawn:cycleStarted` | `{ sessionId, cycleNumber }` | New update cycle starting |
+| `respawn:cycleCompleted` | `{ sessionId, cycleNumber }` | Update cycle finished |
+| `respawn:stepSent` | `{ sessionId, step, input }` | Command sent (update/clear/init) |
+| `respawn:stepCompleted` | `{ sessionId, step }` | Command completed |
+| `respawn:configUpdated` | `{ sessionId, config }` | Configuration changed |
+| `respawn:log` | `{ sessionId, message }` | Debug/info log message |
+| `respawn:error` | `{ sessionId, error }` | Error occurred |
 
 **Scheduled Run Events:**
 | Event | Data | Description |
 |-------|------|-------------|
-| `scheduled:created` | `{ id, prompt, duration }` | New scheduled run created |
-| `scheduled:updated` | `{ id, status, remaining }` | Status/timer update |
-| `scheduled:log` | `{ id, message }` | Scheduled run log entry |
-| `scheduled:completed` | `{ id, success }` | Scheduled run finished |
+| `scheduled:created` | `{ run }` | New scheduled run created |
+| `scheduled:updated` | `{ run }` | Status/timer update |
+| `scheduled:log` | `{ id, log }` | Scheduled run log entry |
+| `scheduled:completed` | `{ run }` | Scheduled run finished |
+| `scheduled:stopped` | `{ run }` | Scheduled run stopped by user |
+
+**Case Events:**
+| Event | Data | Description |
+|-------|------|-------------|
+| `case:created` | `{ name, path }` | New case directory created |
+
+**Init Event:**
+| Event | Data | Description |
+|-------|------|-------------|
+| `init` | `{ sessions, scheduledRuns, respawnStatus, timestamp }` | Full state sent on SSE connection |
 
 ## API Endpoints
 
 ### Session Management
 
 ```
-GET  /api/sessions                    # List all sessions
+GET  /api/sessions                    # List all sessions (includes buffer stats)
 POST /api/sessions                    # Create session { workingDir }
 GET  /api/sessions/:id                # Get single session details
-DELETE /api/sessions/:id              # Stop and remove a session
+DELETE /api/sessions/:id              # Stop and remove a session (kills process + children)
+DELETE /api/sessions                  # Kill all sessions at once
 GET  /api/sessions/:id/output         # Get session output buffer
 GET  /api/sessions/:id/terminal       # Get terminal buffer (raw ANSI)
 ```
@@ -173,13 +235,25 @@ GET  /api/scheduled/:id               # Get scheduled run details
 DELETE /api/scheduled/:id             # Cancel scheduled run
 ```
 
-### Cases & Quick Run
+### Cases & Quick Start
 
 ```
 GET  /api/cases                       # List case directories
 POST /api/cases                       # Create case { name, description }
 GET  /api/cases/:name                 # Get case details
+POST /api/quick-start                 # Quick start { caseName? } - creates case + interactive session
 POST /api/run                         # Quick run { prompt, workingDir } (no session management)
+```
+
+**Quick Start Response:**
+```typescript
+{
+  success: boolean;
+  sessionId?: string;    // ID of the created session
+  casePath?: string;     // Full path to the case directory
+  caseName?: string;     // Name of the case
+  error?: string;        // Error message if success is false
+}
 ```
 
 ### Events
@@ -189,11 +263,3 @@ GET  /api/events                      # SSE stream (real-time events)
 GET  /api/status                      # Full state snapshot (sessions + scheduled + respawn)
 ```
 
-## Session Log
-
-| Date | Tasks Completed | Files Changed | Notes |
-|------|-----------------|---------------|-------|
-| 2026-01-18 | Initial implementation | All files | Core CLI + web interface |
-| 2026-01-18 | Add web interface | src/web/* | Fastify + SSE + responsive UI |
-| 2026-01-18 | Add RespawnController | src/respawn-controller.ts, src/web/server.ts, src/types.ts | Auto-respawn loop with state machine |
-| 2026-01-18 | Update documentation | CLAUDE.md, README.md | Full API docs (20 endpoints), SSE event catalog, interactive terminal docs, respawn controller docs |
