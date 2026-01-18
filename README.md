@@ -8,6 +8,11 @@ A Claude Code session manager with an autonomous Ralph Loop for task assignment 
 - **Session Management**: Spawn and manage multiple Claude CLI sessions as PTY subprocesses with one-click kill
 - **Interactive Terminal**: Full terminal access with resize support, buffer persistence, and 60fps batched rendering
 - **Respawn Controller**: Autonomous state machine that cycles sessions (update docs → /clear → /init) with configurable prompts
+- **Enable Respawn on Existing Sessions**: Start respawn on already-running sessions without restarting
+- **Timed Respawn**: Set duration limits for respawn loops with countdown timer display
+- **Auto-Clear Context**: Automatically send /clear when token count exceeds threshold (default 100k)
+- **Token Tracking**: Real-time input/output token tracking per session
+- **Background Task Tracking**: Detect and display Claude's background tasks in a tree view
 - **Timed Runs**: Schedule Claude to work for a specific duration with animated live countdown
 - **Real-time Output**: Stream Claude's responses in real-time via Server-Sent Events (30 event types)
 - **Task Queue**: Priority-based task queue with dependency support
@@ -82,12 +87,14 @@ The Quick Start button will:
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+Enter` | Quick Start (create case + interactive session) |
+| `Ctrl+N` | New Session |
+| `Ctrl+W` | Close current session |
+| `Ctrl+Tab` | Switch to next session |
 | `Ctrl+K` | Kill all sessions |
 | `Ctrl+L` | Clear terminal |
-| `Ctrl+1/2/3` | Switch tabs (Run/Cases/Settings) |
 | `Ctrl++/-` | Increase/decrease font size |
 | `Ctrl+?` | Show keyboard shortcuts help |
-| `Escape` | Close modals |
+| `Escape` | Close panels and modals |
 
 #### Additional Features
 
@@ -197,9 +204,15 @@ The respawn controller keeps interactive sessions productive by automatically cy
 
 1. Detects when session goes idle (prompt character visible, no activity)
 2. Sends configured update prompt (default: "update all the docs and CLAUDE.md")
-3. Sends `/clear` command to reset context
-4. Sends `/init` to reinitialize
+3. Optionally sends `/clear` command to reset context
+4. Optionally sends `/init` to reinitialize
 5. Repeats
+
+**New Features:**
+- **Enable on Existing Sessions**: Start respawn on already-running sessions
+- **Timed Duration**: Set a duration limit (e.g., 30 minutes) after which respawn automatically stops
+- **Auto-Clear**: Automatically send /clear when token count exceeds threshold (default 100k)
+- **Configurable Steps**: Toggle /clear and /init steps independently
 
 **Configuration via API:**
 ```bash
@@ -208,16 +221,35 @@ curl -X POST localhost:3000/api/sessions/:id/respawn/start \
   -H "Content-Type: application/json" \
   -d '{"config": {"idleTimeoutMs": 10000, "updatePrompt": "run tests and fix issues"}}'
 
+# Enable respawn on an existing running session with duration
+curl -X POST localhost:3000/api/sessions/:id/respawn/enable \
+  -H "Content-Type: application/json" \
+  -d '{"config": {"updatePrompt": "continue working"}, "durationMinutes": 60}'
+
+# Enable auto-clear at 100k tokens
+curl -X POST localhost:3000/api/sessions/:id/auto-clear \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "threshold": 100000}'
+
 # Update config on running respawn
 curl -X PUT localhost:3000/api/sessions/:id/respawn/config \
   -H "Content-Type: application/json" \
-  -d '{"updatePrompt": "refactor the API layer"}'
+  -d '{"updatePrompt": "refactor the API layer", "sendClear": true, "sendInit": false}'
 ```
 
 **State Machine:**
 ```
 WATCHING → SENDING_UPDATE → WAITING_UPDATE → SENDING_CLEAR → WAITING_CLEAR → SENDING_INIT → WAITING_INIT → WATCHING
 ```
+
+**Respawn Config Options:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `idleTimeoutMs` | 5000 | Time to wait after idle before sending update |
+| `updatePrompt` | "update all docs..." | Prompt to send when idle |
+| `interStepDelayMs` | 1000 | Delay between respawn steps |
+| `sendClear` | true | Send /clear after update prompt |
+| `sendInit` | true | Send /init after /clear |
 
 ### Utility
 

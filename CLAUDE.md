@@ -33,9 +33,10 @@ npx vitest run -t "should create session"     # Run tests matching pattern
 src/
 ├── index.ts              # CLI entry point (commander)
 ├── cli.ts                # CLI command implementations
-├── session.ts            # Core: PTY wrapper for Claude CLI
+├── session.ts            # Core: PTY wrapper for Claude CLI + token tracking
 ├── session-manager.ts    # Manages multiple sessions
 ├── respawn-controller.ts # Auto-respawn state machine
+├── task-tracker.ts       # Background task detection and tree display
 ├── ralph-loop.ts         # Autonomous task assignment
 ├── task.ts / task-queue.ts # Priority queue with dependencies
 ├── state-store.ts        # Persistence to ~/.claudeman/state.json
@@ -56,9 +57,11 @@ src/
 
 ### Key Components
 
-- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working` events. Maintains terminal buffer for reconnections. Includes buffer management for long-running sessions (12-24+ hours) with automatic trimming.
+- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working`, `autoClear` events. Maintains terminal buffer for reconnections. Includes buffer management for long-running sessions (12-24+ hours) with automatic trimming. Tracks input/output tokens and supports auto-clear at configurable threshold.
 
-- **RespawnController** (`src/respawn-controller.ts`): State machine that keeps interactive sessions productive. Detects idle → sends update prompt → `/clear` → `/init` → repeats. Configurable timeouts and prompts.
+- **TaskTracker** (`src/task-tracker.ts`): Detects Claude's background Task tool usage from JSON output. Builds a tree of parent-child task relationships. Emits `taskCreated`, `taskUpdated`, `taskCompleted`, `taskFailed` events. Used by Session to track background work.
+
+- **RespawnController** (`src/respawn-controller.ts`): State machine that keeps interactive sessions productive. Detects idle → sends update prompt → optionally `/clear` → optionally `/init` → repeats. Configurable timeouts, prompts, and step toggles.
 
 - **RalphLoop** (`src/ralph-loop.ts`): Autonomous task assignment controller. Monitors sessions for idle state, assigns tasks from queue, detects completion via `<promise>PHRASE</promise>` markers. Supports time-aware loops with minimum duration.
 
@@ -145,6 +148,28 @@ Default config (`RespawnConfig` in `src/types.ts`):
 - `idleTimeoutMs`: 5000 (5s after prompt)
 - `updatePrompt`: "update all the docs and CLAUDE.md"
 - `interStepDelayMs`: 1000 (1s between steps)
+- `sendClear`: true (send /clear after update)
+- `sendInit`: true (send /init after /clear)
+
+### Token Tracking & Auto-Clear
+
+Session tracks input/output tokens from Claude's JSON messages:
+
+```typescript
+{
+  tokens: {
+    input: number;   // Total input tokens used
+    output: number;  // Total output tokens used
+    total: number;   // Combined total
+  },
+  autoClear: {
+    enabled: boolean;    // Whether auto-clear is active
+    threshold: number;   // Token threshold (default 100000)
+  }
+}
+```
+
+When enabled, auto-clear waits for idle state, sends `/clear`, and resets token counts.
 
 ### SSE Event Catalog
 
@@ -166,6 +191,15 @@ All events are broadcast to clients connected to `/api/events`. Event format: `{
 | `session:working` | `{ id }` | Session is working (activity detected) |
 | `session:updated` | `{ session }` | Session state updated |
 | `session:error` | `{ id, error }` | Session error occurred |
+| `session:autoClear` | `{ sessionId, tokens, threshold }` | Auto-clear triggered |
+
+**Task Events:**
+| Event | Data | Description |
+|-------|------|-------------|
+| `task:created` | `{ sessionId, task }` | Background task started |
+| `task:updated` | `{ sessionId, task }` | Task status updated |
+| `task:completed` | `{ sessionId, task }` | Task finished successfully |
+| `task:failed` | `{ sessionId, task, error }` | Task failed |
 
 **Respawn Controller Events:**
 | Event | Data | Description |
@@ -178,6 +212,7 @@ All events are broadcast to clients connected to `/api/events`. Event format: `{
 | `respawn:stepSent` | `{ sessionId, step, input }` | Command sent (update/clear/init) |
 | `respawn:stepCompleted` | `{ sessionId, step }` | Command completed |
 | `respawn:configUpdated` | `{ sessionId, config }` | Configuration changed |
+| `respawn:timerStarted` | `{ sessionId, durationMinutes, endAt, startedAt }` | Timed respawn started |
 | `respawn:log` | `{ sessionId, message }` | Debug/info log message |
 | `respawn:error` | `{ sessionId, error }` | Error occurred |
 
@@ -230,7 +265,9 @@ POST /api/sessions/:id/interactive-respawn  # Start interactive + respawn contro
 GET  /api/sessions/:id/respawn        # Get respawn controller state
 POST /api/sessions/:id/respawn/start  # Start respawn controller { config? }
 POST /api/sessions/:id/respawn/stop   # Stop respawn controller
-PUT  /api/sessions/:id/respawn/config # Update config { idleTimeoutMs, updatePrompt, interStepDelayMs }
+POST /api/sessions/:id/respawn/enable # Enable respawn on existing session { config?, durationMinutes? }
+PUT  /api/sessions/:id/respawn/config # Update config { idleTimeoutMs, updatePrompt, interStepDelayMs, sendClear, sendInit }
+POST /api/sessions/:id/auto-clear     # Set auto-clear { enabled, threshold? }
 ```
 
 ### Scheduled Runs
