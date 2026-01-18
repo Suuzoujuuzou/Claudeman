@@ -773,8 +773,18 @@ class ClaudemanApp {
     }
 
     if (!prompt) {
-      alert('Please enter a prompt');
+      this.showToast('Please enter a prompt', 'warning');
       return;
+    }
+
+    // Confirm for long runs (over 30 minutes)
+    if (duration >= 30) {
+      const hours = Math.floor(duration / 60);
+      const mins = duration % 60;
+      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} minutes`;
+      if (!confirm(`Start a ${timeStr} timed run? This will use API credits for the duration.`)) {
+        return;
+      }
     }
 
     this.setRunning(true);
