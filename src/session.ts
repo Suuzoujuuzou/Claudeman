@@ -361,6 +361,9 @@ export class Session extends EventEmitter {
       this.emit('terminal', data);
       this.emit('output', data);
 
+      // Parse token count from status line (e.g., "123.4k tokens" or "5234 tokens")
+      this.parseTokensFromStatusLine(data);
+
       // Detect if Claude is working or at prompt
       // The prompt line contains "❯" when waiting for input
       if (data.includes('❯') || data.includes('\u276f')) {
@@ -524,6 +527,7 @@ export class Session extends EventEmitter {
         this.ptyProcess = pty.spawn('claude', [
           '-p',
           '--dangerously-skip-permissions',
+          '--output-format', 'stream-json',
           prompt
         ], {
           name: 'xterm-256color',
@@ -658,6 +662,43 @@ export class Session extends EventEmitter {
     // Trim text output buffer for long-running sessions
     if (this._textOutput.length > MAX_TEXT_OUTPUT_SIZE) {
       this._textOutput = this._textOutput.slice(-TEXT_OUTPUT_TRIM_SIZE);
+    }
+  }
+
+  // Parse token count from Claude's status line in interactive mode
+  // Matches patterns like "123.4k tokens", "5234 tokens", "1.2M tokens"
+  private parseTokensFromStatusLine(data: string): void {
+    // Remove ANSI escape codes for cleaner parsing
+    const cleanData = data.replace(/\x1b\[[0-9;]*m/g, '');
+
+    // Match patterns: "123.4k tokens", "5234 tokens", "1.2M tokens"
+    // The status line typically shows total tokens like "1.2k tokens" near the prompt
+    const tokenMatch = cleanData.match(/(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens/);
+
+    if (tokenMatch) {
+      let tokenCount = parseFloat(tokenMatch[1]);
+      const suffix = tokenMatch[2]?.toLowerCase();
+
+      // Convert k/M suffix to actual number
+      if (suffix === 'k') {
+        tokenCount *= 1000;
+      } else if (suffix === 'm') {
+        tokenCount *= 1000000;
+      }
+
+      // Only update if the new count is higher (tokens only increase within a session)
+      // We use total tokens as an estimate - Claude shows combined input+output
+      const currentTotal = this._totalInputTokens + this._totalOutputTokens;
+      if (tokenCount > currentTotal) {
+        // Estimate: split roughly 60% input, 40% output (common ratio)
+        // This is an approximation since interactive mode doesn't give us the breakdown
+        const delta = tokenCount - currentTotal;
+        this._totalInputTokens += Math.round(delta * 0.6);
+        this._totalOutputTokens += Math.round(delta * 0.4);
+
+        // Check if we should auto-clear
+        this.checkAutoClear();
+      }
     }
   }
 
