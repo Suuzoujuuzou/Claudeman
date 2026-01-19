@@ -1031,6 +1031,49 @@ export class WebServer extends EventEmitter {
     await this.setupRoutes();
     await this.app.listen({ port: this.port, host: '0.0.0.0' });
     console.log(`Claudeman web interface running at http://localhost:${this.port}`);
+
+    // Restore screen sessions from previous run
+    await this.restoreScreenSessions();
+  }
+
+  private async restoreScreenSessions(): Promise<void> {
+    try {
+      // Reconcile screens to find which ones are still alive
+      const { alive, dead } = await this.screenManager.reconcileScreens();
+
+      if (alive.length > 0) {
+        console.log(`[Server] Found ${alive.length} alive screen session(s) from previous run`);
+
+        // For each alive screen, create a Session object if it doesn't exist
+        const screens = this.screenManager.getScreens();
+        for (const screen of screens) {
+          if (!this.sessions.has(screen.sessionId)) {
+            // Create a session object for this screen
+            const session = new Session({
+              id: screen.sessionId,  // Preserve the original session ID
+              workingDir: screen.workingDir,
+              mode: screen.mode,
+              name: `Restored: ${screen.screenName}`
+            });
+
+            this.sessions.set(session.id, session);
+            this.setupSessionListeners(session);
+
+            // Mark it as restored (not started yet - user needs to attach)
+            console.log(`[Server] Restored session ${session.id} from screen ${screen.screenName}`);
+          }
+        }
+
+        // Start stats collection to show screen info
+        this.screenManager.startStatsCollection(2000);
+      }
+
+      if (dead.length > 0) {
+        console.log(`[Server] Cleaned up ${dead.length} dead screen session(s)`);
+      }
+    } catch (err) {
+      console.error('[Server] Failed to restore screen sessions:', err);
+    }
   }
 
   async stop(): Promise<void> {
