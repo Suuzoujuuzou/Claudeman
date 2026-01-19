@@ -1467,22 +1467,28 @@ class ClaudemanApp {
   async saveSessionOptions() {
     if (!this.editingSessionId) return;
 
-    const name = document.getElementById('sessionNameInput').value.trim();
+    const session = this.sessions.get(this.editingSessionId);
+    const newName = document.getElementById('sessionNameInput').value.trim();
+    const oldName = session?.name || '';
 
-    try {
-      const res = await fetch(`/api/sessions/${this.editingSessionId}/name`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+    // Only update if name actually changed
+    if (newName !== oldName) {
+      try {
+        const res = await fetch(`/api/sessions/${this.editingSessionId}/name`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
 
-      this.showToast('Session renamed', 'success');
-      this.closeSessionOptions();
-    } catch (err) {
-      this.showToast('Failed to rename: ' + err.message, 'error');
+        this.showToast('Session renamed', 'success');
+      } catch (err) {
+        this.showToast('Failed to rename: ' + err.message, 'error');
+      }
     }
+
+    this.closeSessionOptions();
   }
 
   // Inline rename on right-click
