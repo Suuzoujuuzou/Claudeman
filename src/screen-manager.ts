@@ -457,4 +457,26 @@ export class ScreenManager extends EventEmitter {
       return false;
     }
   }
+
+  // Send input directly to screen session using screen -X stuff
+  // This bypasses the attached PTY and sends input directly to the screen
+  sendInput(sessionId: string, input: string): boolean {
+    const screen = this.screens.get(sessionId);
+    if (!screen) {
+      return false;
+    }
+
+    try {
+      // Use screen -X stuff with $'...' syntax to send literal characters
+      // \r (carriage return) is what Claude CLI expects for Enter
+      execSync(`screen -S ${screen.screenName} -X stuff $'${input.replace(/'/g, "'\\''")}'`, {
+        encoding: 'utf-8',
+        timeout: 5000
+      });
+      return true;
+    } catch (err) {
+      console.error('[ScreenManager] Failed to send input:', err);
+      return false;
+    }
+  }
 }
