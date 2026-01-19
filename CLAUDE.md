@@ -229,6 +229,17 @@ GNU screen creates blank space at the top when initializing a session. This is h
 - **Claude sessions**: After 100ms, clears terminal buffer and emits `clearTerminal` event. Client receives `session:clearTerminal` via SSE and clears/resets its xterm.
 - **Shell sessions**: After 100ms, clears terminal buffer and sends `clear\n` command to the shell.
 
+### Tab Switching
+
+When switching between Claude session tabs, the terminal buffer may have been rendered at a different terminal size. To fix the "squished" display:
+
+1. Clear and reset xterm
+2. Write the terminal buffer
+3. Send resize to update PTY dimensions
+4. Send Ctrl+L (`\x0c`) to trigger Claude CLI to redraw at the correct size
+
+This only applies to Claude sessions (not shell sessions) since Claude CLI responds to Ctrl+L by redrawing its interface.
+
 ### SSE Events
 
 All events broadcast to `/api/events` with format: `{ type: string, sessionId?: string, data: any }`.
