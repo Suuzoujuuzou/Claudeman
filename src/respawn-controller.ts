@@ -89,6 +89,7 @@ export class RespawnController extends EventEmitter {
   private terminalBuffer: string = '';
   private promptDetected: boolean = false;
   private workingDetected: boolean = false;
+  private terminalHandler: ((data: string) => void) | null = null;
 
   // Terminal patterns - detect when Claude is ready for input
   private readonly PROMPT_PATTERNS = [
@@ -166,7 +167,10 @@ export class RespawnController extends EventEmitter {
     this.log('Stopping respawn controller');
     this.clearTimers();
     this.setState('stopped');
-    this.session.removeAllListeners('terminal');
+    if (this.terminalHandler) {
+      this.session.off('terminal', this.terminalHandler);
+      this.terminalHandler = null;
+    }
   }
 
   /**
@@ -189,12 +193,15 @@ export class RespawnController extends EventEmitter {
   }
 
   private setupTerminalListener(): void {
-    // Clear any existing listener
-    this.session.removeAllListeners('terminal');
+    // Remove our previous listener if any (don't remove other listeners!)
+    if (this.terminalHandler) {
+      this.session.off('terminal', this.terminalHandler);
+    }
 
-    this.session.on('terminal', (data: string) => {
+    this.terminalHandler = (data: string) => {
       this.handleTerminalData(data);
-    });
+    };
+    this.session.on('terminal', this.terminalHandler);
   }
 
   private handleTerminalData(data: string): void {
