@@ -405,26 +405,26 @@ class ClaudemanApp {
     this.eventSource.addEventListener('screen:created', (e) => {
       const screen = JSON.parse(e.data);
       this.screenSessions.push(screen);
-      this.renderProcessPanel();
+      this.renderScreenSessions();
     });
 
     this.eventSource.addEventListener('screen:killed', (e) => {
       const data = JSON.parse(e.data);
       this.screenSessions = this.screenSessions.filter(s => s.sessionId !== data.sessionId);
-      this.renderProcessPanel();
+      this.renderScreenSessions();
     });
 
     this.eventSource.addEventListener('screen:died', (e) => {
       const data = JSON.parse(e.data);
       this.screenSessions = this.screenSessions.filter(s => s.sessionId !== data.sessionId);
-      this.renderProcessPanel();
+      this.renderScreenSessions();
       this.showToast('Screen session died: ' + data.sessionId.slice(0, 8), 'warning');
     });
 
     this.eventSource.addEventListener('screen:statsUpdated', (e) => {
       this.screenSessions = JSON.parse(e.data);
       if (document.getElementById('processPanel').classList.contains('open')) {
-        this.renderProcessPanel();
+        this.renderScreenSessions();
       }
     });
   }
@@ -1374,23 +1374,34 @@ class ClaudemanApp {
     this.closeAppSettings();
     this.cancelCloseSession();
     document.getElementById('respawnPanel').classList.remove('open');
-    document.getElementById('taskPanel').classList.remove('open');
-    document.getElementById('processPanel').classList.remove('open');
+    document.getElementById('monitorPanel').classList.remove('open');
   }
 
-  // ========== Task Panel ==========
+  // ========== Monitor Panel (combined Screen Sessions + Background Tasks) ==========
 
-  toggleTaskPanel() {
-    const panel = document.getElementById('taskPanel');
+  async toggleMonitorPanel() {
+    const panel = document.getElementById('monitorPanel');
     panel.classList.toggle('open');
+
     if (panel.classList.contains('open')) {
+      // Load screens and start stats collection
+      await this.loadScreens();
+      await fetch('/api/screens/stats/start', { method: 'POST' });
       this.renderTaskPanel();
+    } else {
+      // Stop stats collection when panel is closed
+      await fetch('/api/screens/stats/stop', { method: 'POST' });
     }
+  }
+
+  // Legacy alias for task panel toggle (used by session tab badge)
+  toggleTaskPanel() {
+    this.toggleMonitorPanel();
   }
 
   renderTaskPanel() {
     const session = this.sessions.get(this.activeSessionId);
-    const body = document.getElementById('taskPanelBody');
+    const body = document.getElementById('backgroundTasksBody');
     const stats = document.getElementById('taskPanelStats');
 
     if (!session || !session.taskTree || session.taskTree.length === 0) {
@@ -1460,38 +1471,24 @@ class ClaudemanApp {
     return result;
   }
 
-  // ========== Process Panel ==========
-
-  async toggleProcessPanel() {
-    const panel = document.getElementById('processPanel');
-    panel.classList.toggle('open');
-
-    if (panel.classList.contains('open')) {
-      // Load screens and start stats collection
-      await this.loadScreens();
-      await fetch('/api/screens/stats/start', { method: 'POST' });
-    } else {
-      // Stop stats collection when panel is closed
-      await fetch('/api/screens/stats/stop', { method: 'POST' });
-    }
-  }
+  // ========== Screen Sessions (in Monitor Panel) ==========
 
   async loadScreens() {
     try {
       const res = await fetch('/api/screens');
       const data = await res.json();
       this.screenSessions = data.screens || [];
-      this.renderProcessPanel();
+      this.renderScreenSessions();
     } catch (err) {
       console.error('Failed to load screens:', err);
     }
   }
 
-  renderProcessPanel() {
-    const body = document.getElementById('processPanelBody');
+  renderScreenSessions() {
+    const body = document.getElementById('screenSessionsBody');
 
     if (!this.screenSessions || this.screenSessions.length === 0) {
-      body.innerHTML = '<div class="process-empty">No screen sessions tracked</div>';
+      body.innerHTML = '<div class="monitor-empty">No screen sessions</div>';
       return;
     }
 
@@ -1528,7 +1525,7 @@ class ClaudemanApp {
     try {
       await fetch(`/api/screens/${sessionId}`, { method: 'DELETE' });
       this.screenSessions = this.screenSessions.filter(s => s.sessionId !== sessionId);
-      this.renderProcessPanel();
+      this.renderScreenSessions();
       this.showToast('Screen killed', 'success');
     } catch (err) {
       this.showToast('Failed to kill screen', 'error');

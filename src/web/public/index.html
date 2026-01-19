@@ -30,6 +30,11 @@
           <span class="status-text">Connecting</span>
         </div>
         <div class="header-tokens" id="headerTokens" title="Total tokens across all sessions">0 tokens</div>
+        <div class="header-font-controls">
+          <button class="btn-icon-header btn-sm" onclick="app.decreaseFontSize()" title="Decrease font (Ctrl+-)">A-</button>
+          <span class="font-size-display" id="fontSizeDisplay">14</span>
+          <button class="btn-icon-header btn-sm" onclick="app.increaseFontSize()" title="Increase font (Ctrl++)">A+</button>
+        </div>
         <button class="btn-icon-header" onclick="app.openAppSettings()" title="App Settings">&#x2699;</button>
       </div>
     </header>
@@ -86,16 +91,9 @@
       </div>
 
       <div class="toolbar-right">
-        <!-- Font Controls -->
-        <button class="btn-toolbar btn-sm" onclick="app.decreaseFontSize()" title="Decrease font (Ctrl+-)">A-</button>
-        <span class="font-size-display" id="fontSizeDisplay">14</span>
-        <button class="btn-toolbar btn-sm" onclick="app.increaseFontSize()" title="Increase font (Ctrl++)">A+</button>
-
-        <div class="toolbar-divider"></div>
-
         <button class="btn-toolbar" onclick="app.copyTerminal()" title="Copy terminal">Copy</button>
         <button class="btn-toolbar" onclick="app.clearTerminal()" title="Clear terminal (Ctrl+L)">Clear</button>
-        <button class="btn-toolbar" onclick="app.toggleProcessPanel()" title="Process Monitor">Processes</button>
+        <button class="btn-toolbar" onclick="app.toggleMonitorPanel()" title="Monitor">Monitor</button>
 
         <div class="toolbar-divider"></div>
 
@@ -199,29 +197,33 @@
       </div>
     </div>
 
-    <!-- Process Monitor Panel (slide-up) -->
-    <div class="process-panel" id="processPanel">
-      <div class="process-panel-header">
-        <span>Process Monitor</span>
-        <div class="process-panel-actions">
+    <!-- Monitor Panel (combined Process Monitor + Background Tasks) -->
+    <div class="monitor-panel" id="monitorPanel">
+      <div class="monitor-panel-header">
+        <span>Monitor</span>
+        <div class="monitor-panel-actions">
           <button class="btn-toolbar btn-sm" onclick="app.reconcileScreens()" title="Check for dead screens">Reconcile</button>
-          <button class="btn-close" onclick="app.toggleProcessPanel()">&times;</button>
+          <button class="btn-close" onclick="app.toggleMonitorPanel()">&times;</button>
         </div>
       </div>
-      <div class="process-panel-body" id="processPanelBody">
-        <div class="process-empty">No screen sessions tracked</div>
-      </div>
-    </div>
-
-    <!-- Task Tree Panel (slide-up) -->
-    <div class="task-panel" id="taskPanel">
-      <div class="task-panel-header">
-        <span>Background Tasks</span>
-        <div class="task-panel-stats" id="taskPanelStats">0 running</div>
-        <button class="btn-close" onclick="app.toggleTaskPanel()">&times;</button>
-      </div>
-      <div class="task-panel-body" id="taskPanelBody">
-        <div class="task-empty">No background tasks</div>
+      <div class="monitor-panel-body">
+        <div class="monitor-section">
+          <div class="monitor-section-header">
+            <span>Screen Sessions</span>
+          </div>
+          <div class="monitor-section-body" id="screenSessionsBody">
+            <div class="monitor-empty">No screen sessions</div>
+          </div>
+        </div>
+        <div class="monitor-section">
+          <div class="monitor-section-header">
+            <span>Background Tasks</span>
+            <span class="task-stats" id="taskPanelStats">0 running</span>
+          </div>
+          <div class="monitor-section-body" id="backgroundTasksBody">
+            <div class="monitor-empty">No background tasks</div>
+          </div>
+        </div>
       </div>
     </div>
 
