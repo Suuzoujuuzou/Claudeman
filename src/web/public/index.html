@@ -98,6 +98,7 @@
 
         <button class="btn-toolbar" onclick="app.copyTerminal()" title="Copy terminal">Copy</button>
         <button class="btn-toolbar" onclick="app.clearTerminal()" title="Clear terminal (Ctrl+L)">Clear</button>
+        <button class="btn-toolbar" onclick="app.toggleProcessPanel()" title="Process Monitor">Processes</button>
 
         <div class="toolbar-divider"></div>
 
@@ -223,6 +224,20 @@
             <div><kbd>Escape</kbd></div><div>Close Panels</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Process Monitor Panel (slide-up) -->
+    <div class="process-panel" id="processPanel">
+      <div class="process-panel-header">
+        <span>Process Monitor</span>
+        <div class="process-panel-actions">
+          <button class="btn-toolbar btn-sm" onclick="app.reconcileScreens()" title="Check for dead screens">Reconcile</button>
+          <button class="btn-close" onclick="app.toggleProcessPanel()">&times;</button>
+        </div>
+      </div>
+      <div class="process-panel-body" id="processPanelBody">
+        <div class="process-empty">No screen sessions tracked</div>
       </div>
     </div>
 

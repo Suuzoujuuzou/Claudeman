@@ -205,6 +205,28 @@ export interface CaseInfo {
   hasClaudeMd?: boolean;
 }
 
+// Screen session types for GNU screen wrapping
+export interface ScreenSession {
+  sessionId: string;        // Claudeman session ID
+  screenName: string;       // GNU screen session name
+  pid: number;              // Screen process PID
+  createdAt: number;
+  workingDir: string;
+  mode: 'claude' | 'shell';
+  attached: boolean;        // Whether webserver is attached
+}
+
+export interface ProcessStats {
+  memoryMB: number;         // Memory usage in MB
+  cpuPercent: number;       // CPU usage percentage
+  childCount: number;       // Number of child processes
+  updatedAt: number;
+}
+
+export interface ScreenSessionWithStats extends ScreenSession {
+  stats?: ProcessStats;
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   pollIntervalMs: 1000,
   defaultTimeoutMs: 300000, // 5 minutes

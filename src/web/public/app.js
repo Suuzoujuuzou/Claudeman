@@ -14,6 +14,7 @@ class ClaudemanApp {
     this.terminalBuffers = new Map(); // Store terminal content per session
     this.editingSessionId = null; // Session being edited in options modal
     this.pendingCloseSessionId = null; // Session pending close confirmation
+    this.screenSessions = []; // Screen sessions for process monitor
 
     // Terminal write batching
     this.pendingWrites = '';
@@ -403,6 +404,33 @@ class ClaudemanApp {
       const data = JSON.parse(e.data);
       if (data.sessionId === this.activeSessionId) {
         this.renderTaskPanel();
+      }
+    });
+
+    // Screen events
+    this.eventSource.addEventListener('screen:created', (e) => {
+      const screen = JSON.parse(e.data);
+      this.screenSessions.push(screen);
+      this.renderProcessPanel();
+    });
+
+    this.eventSource.addEventListener('screen:killed', (e) => {
+      const data = JSON.parse(e.data);
+      this.screenSessions = this.screenSessions.filter(s => s.sessionId !== data.sessionId);
+      this.renderProcessPanel();
+    });
+
+    this.eventSource.addEventListener('screen:died', (e) => {
+      const data = JSON.parse(e.data);
+      this.screenSessions = this.screenSessions.filter(s => s.sessionId !== data.sessionId);
+      this.renderProcessPanel();
+      this.showToast('Screen session died: ' + data.sessionId.slice(0, 8), 'warning');
+    });
+
+    this.eventSource.addEventListener('screen:statsUpdated', (e) => {
+      this.screenSessions = JSON.parse(e.data);
+      if (document.getElementById('processPanel').classList.contains('open')) {
+        this.renderProcessPanel();
       }
     });
   }
@@ -1413,6 +1441,7 @@ class ClaudemanApp {
     document.getElementById('respawnPanel').classList.remove('open');
     document.getElementById('newSessionPanel').classList.remove('open');
     document.getElementById('taskPanel').classList.remove('open');
+    document.getElementById('processPanel').classList.remove('open');
   }
 
   // ========== Task Panel ==========
@@ -1495,6 +1524,97 @@ class ClaudemanApp {
       // The task tree from server already has the structure we need
     }
     return result;
+  }
+
+  // ========== Process Panel ==========
+
+  async toggleProcessPanel() {
+    const panel = document.getElementById('processPanel');
+    panel.classList.toggle('open');
+
+    if (panel.classList.contains('open')) {
+      // Load screens and start stats collection
+      await this.loadScreens();
+      await fetch('/api/screens/stats/start', { method: 'POST' });
+    } else {
+      // Stop stats collection when panel is closed
+      await fetch('/api/screens/stats/stop', { method: 'POST' });
+    }
+  }
+
+  async loadScreens() {
+    try {
+      const res = await fetch('/api/screens');
+      const data = await res.json();
+      this.screenSessions = data.screens || [];
+      this.renderProcessPanel();
+    } catch (err) {
+      console.error('Failed to load screens:', err);
+    }
+  }
+
+  renderProcessPanel() {
+    const body = document.getElementById('processPanelBody');
+
+    if (!this.screenSessions || this.screenSessions.length === 0) {
+      body.innerHTML = '<div class="process-empty">No screen sessions tracked</div>';
+      return;
+    }
+
+    let html = '';
+    for (const screen of this.screenSessions) {
+      const stats = screen.stats || { memoryMB: 0, cpuPercent: 0, childCount: 0 };
+      const modeClass = screen.mode === 'shell' ? 'shell' : '';
+
+      html += `
+        <div class="process-item">
+          <span class="process-mode ${modeClass}">${screen.mode}</span>
+          <div class="process-info">
+            <div class="process-name">${this.escapeHtml(screen.screenName)}</div>
+            <div class="process-meta">
+              <span class="process-stat memory">${stats.memoryMB}MB</span>
+              <span class="process-stat cpu">${stats.cpuPercent}%</span>
+              <span class="process-stat children">${stats.childCount} children</span>
+              <span>PID: ${screen.pid}</span>
+            </div>
+          </div>
+          <div class="process-actions">
+            <button class="btn-toolbar btn-sm btn-danger" onclick="app.killScreen('${screen.sessionId}')" title="Kill screen">Kill</button>
+          </div>
+        </div>
+      `;
+    }
+
+    body.innerHTML = html;
+  }
+
+  async killScreen(sessionId) {
+    if (!confirm('Kill this screen session?')) return;
+
+    try {
+      await fetch(`/api/screens/${sessionId}`, { method: 'DELETE' });
+      this.screenSessions = this.screenSessions.filter(s => s.sessionId !== sessionId);
+      this.renderProcessPanel();
+      this.showToast('Screen killed', 'success');
+    } catch (err) {
+      this.showToast('Failed to kill screen', 'error');
+    }
+  }
+
+  async reconcileScreens() {
+    try {
+      const res = await fetch('/api/screens/reconcile', { method: 'POST' });
+      const data = await res.json();
+
+      if (data.dead && data.dead.length > 0) {
+        this.showToast(`Found ${data.dead.length} dead screen(s)`, 'warning');
+        await this.loadScreens();
+      } else {
+        this.showToast('All screens are alive', 'success');
+      }
+    } catch (err) {
+      this.showToast('Failed to reconcile screens', 'error');
+    }
   }
 
   // ========== Toast ==========

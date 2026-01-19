@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { Session, ClaudeMessage, type BackgroundTask } from '../session.js';
 import { RespawnController, RespawnConfig, RespawnState } from '../respawn-controller.js';
+import { ScreenManager } from '../screen-manager.js';
 import { getStore } from '../state-store.js';
 import { generateClaudeMd } from '../templates/claude-md.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -53,6 +54,7 @@ export class WebServer extends EventEmitter {
   private sseClients: Set<FastifyReply> = new Set();
   private store = getStore();
   private port: number;
+  private screenManager: ScreenManager;
   // Terminal batching for performance
   private terminalBatches: Map<string, string> = new Map();
   private terminalBatchTimer: NodeJS.Timeout | null = null;
@@ -61,6 +63,21 @@ export class WebServer extends EventEmitter {
     super();
     this.port = port;
     this.app = Fastify({ logger: false });
+    this.screenManager = new ScreenManager();
+
+    // Set up screen manager event listeners
+    this.screenManager.on('screenCreated', (screen) => {
+      this.broadcast('screen:created', screen);
+    });
+    this.screenManager.on('screenKilled', (data) => {
+      this.broadcast('screen:killed', data);
+    });
+    this.screenManager.on('screenDied', (data) => {
+      this.broadcast('screen:died', data);
+    });
+    this.screenManager.on('statsUpdated', (screens) => {
+      this.broadcast('screen:statsUpdated', screens);
+    });
   }
 
   private async setupRoutes(): Promise<void> {
@@ -684,6 +701,42 @@ export class WebServer extends EventEmitter {
         return { error: (err as Error).message };
       }
     });
+
+    // ============ Screen Management Endpoints ============
+
+    // Get all tracked screens with stats
+    this.app.get('/api/screens', async () => {
+      const screens = await this.screenManager.getScreensWithStats();
+      return {
+        screens,
+        screenAvailable: ScreenManager.isScreenAvailable()
+      };
+    });
+
+    // Kill a screen session
+    this.app.delete('/api/screens/:sessionId', async (req) => {
+      const { sessionId } = req.params as { sessionId: string };
+      const success = await this.screenManager.killScreen(sessionId);
+      return { success };
+    });
+
+    // Reconcile screens (find dead ones)
+    this.app.post('/api/screens/reconcile', async () => {
+      const result = await this.screenManager.reconcileScreens();
+      return result;
+    });
+
+    // Start stats collection
+    this.app.post('/api/screens/stats/start', async () => {
+      this.screenManager.startStatsCollection(2000);
+      return { success: true };
+    });
+
+    // Stop stats collection
+    this.app.post('/api/screens/stats/stop', async () => {
+      this.screenManager.stopStatsCollection();
+      return { success: true };
+    });
   }
 
   private setupSessionListeners(session: Session): void {
@@ -987,6 +1040,9 @@ export class WebServer extends EventEmitter {
       this.terminalBatchTimer = null;
     }
     this.terminalBatches.clear();
+
+    // Stop screen stats collection
+    this.screenManager.stopStatsCollection();
 
     // Stop all respawn controllers
     for (const controller of this.respawnControllers.values()) {
