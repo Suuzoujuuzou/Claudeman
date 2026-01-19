@@ -22,16 +22,30 @@ npx tsx src/index.ts web -p 8080   # Dev mode with custom port
 node dist/index.js web             # After npm run build
 claudeman web                      # After npm link
 
-# NOTE: `npm run dev` runs the CLI (shows help), NOT the web server
-# You must specify the `web` subcommand to start the server
+# IMPORTANT: `npm run dev` runs the CLI help, NOT the web server
+# Always use `npx tsx src/index.ts web` for development
 
-# Testing
+# Testing (vitest)
 npm run test                              # Run all tests once
 npm run test:watch                        # Watch mode
 npm run test:coverage                     # With coverage report
 npx vitest run test/session.test.ts       # Single file
 npx vitest run -t "should create session" # By pattern
 ```
+
+### Test Files
+
+| File | Coverage |
+|------|----------|
+| `session.test.ts` | Session creation, PTY modes, token tracking |
+| `respawn-controller.test.ts` | State machine transitions, config updates |
+| `scheduled-runs.test.ts` | Timed runs, iteration cleanup |
+| `quick-start.test.ts` | Case creation + session startup |
+| `sse-events.test.ts` | Event broadcasting, client reconnection |
+| `integration-flows.test.ts` | Multi-step workflows |
+| `edge-cases.test.ts` | Error handling, boundary conditions |
+| `session-cleanup.test.ts` | Process termination, buffer management |
+| `pty-interactive.test.ts` | Terminal resize, input handling |
 
 ## Architecture
 
@@ -64,7 +78,7 @@ src/
 
 ### Key Components
 
-- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working`, `autoClear` events. Maintains terminal buffer for reconnections. Includes buffer management for long-running sessions (12-24+ hours) with automatic trimming. Tracks input/output tokens and supports auto-clear at configurable threshold.
+- **Session** (`src/session.ts`): Wraps Claude CLI as PTY subprocess. Two modes: `runPrompt(prompt)` for one-shot execution, `startInteractive()` for persistent terminal. Emits `output`, `terminal`, `message`, `completion`, `exit`, `idle`, `working`, `autoClear`, `clearTerminal` events. Maintains terminal buffer for reconnections. Includes buffer management for long-running sessions (12-24+ hours) with automatic trimming. Tracks input/output tokens and supports auto-clear at configurable threshold.
 
 - **TaskTracker** (`src/task-tracker.ts`): Detects Claude's background Task tool usage from JSON output. Builds a tree of parent-child task relationships. Emits `taskCreated`, `taskUpdated`, `taskCompleted`, `taskFailed` events. Used by Session to track background work.
 
@@ -208,11 +222,18 @@ Session tracks input/output tokens differently depending on mode:
 
 When enabled, auto-clear waits for idle state, sends `/clear`, and resets token counts.
 
+### Screen Session Initialization
+
+GNU screen creates blank space at the top when initializing a session. This is handled after attaching to the screen:
+
+- **Claude sessions**: After 100ms, clears terminal buffer and emits `clearTerminal` event. Client receives `session:clearTerminal` via SSE and clears/resets its xterm.
+- **Shell sessions**: After 100ms, clears terminal buffer and sends `clear\n` command to the shell.
+
 ### SSE Events
 
 All events broadcast to `/api/events` with format: `{ type: string, sessionId?: string, data: any }`.
 
-Event categories (prefixes): `session:`, `task:`, `respawn:`, `scheduled:`, `case:`, `init`. Key events include `session:idle`, `session:working`, `session:terminal`, `session:completion`, `respawn:stateChanged`. See `src/web/server.ts` for the full event catalog.
+Event categories (prefixes): `session:`, `task:`, `respawn:`, `scheduled:`, `case:`, `init`. Key events include `session:idle`, `session:working`, `session:terminal`, `session:clearTerminal`, `session:completion`, `respawn:stateChanged`. See `src/web/server.ts` for the full event catalog.
 
 ## API Endpoints
 
@@ -303,8 +324,30 @@ Key files:
 - `styles.css` - All CSS styles
 - Libraries loaded from CDN (xterm.js, addons)
 
+## Adding New Features
+
+### New API Endpoint
+
+1. Add types to `src/types.ts` (request/response interfaces)
+2. Add route in `src/web/server.ts` within the `buildServer()` function
+3. Follow existing patterns: use `createErrorResponse()` for errors
+
+### New SSE Event
+
+1. Add event type constant in `src/web/server.ts` (see `broadcast()` calls)
+2. Emit from appropriate component (Session, RespawnController, etc.)
+3. Handle in `src/web/public/app.js` `handleSSEEvent()` switch
+
+### New Session Event
+
+1. Add to `SessionEvents` interface in `src/session.ts`
+2. Emit in `src/session.ts` via `this.emit()`
+3. Subscribe in `src/web/server.ts` when wiring session to SSE
+4. Handle in `src/web/public/app.js` SSE event listener
+
 ## Notes
 
 - State persists to `~/.claudeman/state.json` and `~/.claudeman/screens.json`
 - Cases are created in `~/claudeman-cases/` by default
 - Sessions are wrapped in GNU screen for persistence across server restarts
+- Tests use vitest with mocking via `vi.mock()` - no real Claude CLI spawned

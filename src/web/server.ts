@@ -813,6 +813,11 @@ export class WebServer extends EventEmitter {
       this.batchTerminalData(session.id, data);
     });
 
+    session.on('clearTerminal', () => {
+      // Tell clients to clear their terminal (after screen attach)
+      this.broadcast('session:clearTerminal', { id: session.id });
+    });
+
     session.on('message', (msg: ClaudeMessage) => {
       this.broadcast('session:message', { id: session.id, message: msg });
     });

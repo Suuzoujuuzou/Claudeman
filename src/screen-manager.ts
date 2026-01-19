@@ -52,7 +52,9 @@ export class ScreenManager extends EventEmitter {
     const screenName = `claudeman-${sessionId.slice(0, 8)}`;
 
     // Create screen in detached mode with the appropriate command
-    const cmd = mode === 'claude' ? 'claude --dangerously-skip-permissions' : '$SHELL';
+    const cmd = mode === 'claude'
+      ? 'claude --dangerously-skip-permissions'
+      : '$SHELL';
 
     try {
       // Start screen in detached mode

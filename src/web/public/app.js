@@ -254,6 +254,15 @@ class ClaudemanApp {
       }
     });
 
+    this.eventSource.addEventListener('session:clearTerminal', (e) => {
+      const data = JSON.parse(e.data);
+      if (data.id === this.activeSessionId) {
+        // Clear terminal after screen attach to remove initialization blank space
+        this.terminal.clear();
+        this.terminal.reset();
+      }
+    });
+
     this.eventSource.addEventListener('session:completion', (e) => {
       const data = JSON.parse(e.data);
       this.totalCost += data.cost || 0;
@@ -552,7 +561,12 @@ class ClaudemanApp {
     try {
       const res = await fetch(`/api/sessions/${sessionId}/terminal`);
       const data = await res.json();
+
+      // Aggressively clear the terminal before switching sessions
+      // This ensures no residual content from previous display
+      this.terminal.clear();
       this.terminal.reset();
+
       if (data.terminalBuffer) {
         // Strip leading ANSI escape sequences and whitespace to prevent gaps
         // This handles:
@@ -560,8 +574,16 @@ class ClaudemanApp {
         // - OSC sequences: ESC ] ... BEL or ESC \
         // - Simple sequences: ESC followed by single char
         // - Whitespace, CR, LF
+        // - Screen initialization sequences
         let cleanBuffer = data.terminalBuffer;
-        cleanBuffer = cleanBuffer.replace(/^(\x1b\[[0-9;?]*[A-Za-z@`]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[DEMNOP78>=c]|\s|\r|\n)*/g, '');
+
+        // First, strip any leading screen/terminal initialization artifacts
+        // Including cursor positioning that could leave blank space
+        cleanBuffer = cleanBuffer.replace(/^(\x1b\[[0-9;?]*[A-Za-z@`]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>DEMNOP78c]|\x1b[^\x1b]|\s|\r|\n)*/g, '');
+
+        // Also strip any DCS sequences (screen might send these)
+        cleanBuffer = cleanBuffer.replace(/^\x1bP[^\x1b]*\x1b\\/g, '');
+
         this.terminal.write(cleanBuffer);
       }
 
@@ -797,7 +819,28 @@ class ClaudemanApp {
 
       // Auto-switch to the new session
       if (firstSessionId) {
-        await this.selectSession(firstSessionId);
+        // IMPORTANT: Clear terminal BEFORE setting activeSessionId
+        // This prevents SSE events from writing during the transition
+        this.terminal.clear();
+        this.terminal.reset();
+
+        // Small delay to ensure terminal is fully reset before SSE events can write
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // NOW set the active session so SSE events start populating
+        this.activeSessionId = firstSessionId;
+        this.renderSessionTabs();
+
+        // Send resize to the new session
+        const dims = this.fitAddon.proposeDimensions();
+        if (dims) {
+          fetch(`/api/sessions/${firstSessionId}/resize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
+          });
+        }
+
         this.loadQuickStartCases();
       }
 

@@ -50,6 +50,7 @@ export interface SessionEvents {
   exit: (code: number | null) => void;
   completion: (result: string, cost: number) => void;
   terminal: (data: string) => void;  // Raw terminal data
+  clearTerminal: () => void;  // Signal client to clear terminal (after screen attach)
   // Background task events
   taskCreated: (task: BackgroundTask) => void;
   taskUpdated: (task: BackgroundTask) => void;
@@ -327,6 +328,13 @@ export class Session extends EventEmitter {
           cwd: this.workingDir,
           env: { ...process.env, TERM: 'xterm-256color' },
         });
+
+        // Screen creates blank space when initializing. After attaching, wait for
+        // the initial burst then clear the buffer and tell clients to clear their terminal.
+        setTimeout(() => {
+          this._terminalBuffer = '';
+          this.emit('clearTerminal');
+        }, 100);
       } catch (err) {
         console.error('[Session] Failed to create screen session, falling back to direct PTY:', err);
         this._useScreen = false;
@@ -448,6 +456,15 @@ export class Session extends EventEmitter {
           cwd: this.workingDir,
           env: { ...process.env, TERM: 'xterm-256color' },
         });
+
+        // Screen creates blank space when initializing. After attaching, wait for
+        // the initial burst then clear by sending 'clear' command to the shell.
+        setTimeout(() => {
+          if (this.ptyProcess) {
+            this._terminalBuffer = '';
+            this.ptyProcess.write('clear\n');
+          }
+        }, 100);
       } catch (err) {
         console.error('[Session] Failed to create screen session, falling back to direct PTY:', err);
         this._useScreen = false;
