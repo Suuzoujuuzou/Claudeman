@@ -3,9 +3,14 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AppState, createInitialState } from './types.js';
 
+// Debounce delay for batching state writes (ms)
+const SAVE_DEBOUNCE_MS = 500;
+
 export class StateStore {
   private state: AppState;
   private filePath: string;
+  private saveTimeout: NodeJS.Timeout | null = null;
+  private dirty: boolean = false;
 
   constructor(filePath?: string) {
     this.filePath = filePath || join(homedir(), '.claudeman', 'state.json');
@@ -42,9 +47,34 @@ export class StateStore {
     return createInitialState();
   }
 
+  // Debounced save - batches multiple updates into a single write
   save(): void {
+    this.dirty = true;
+    if (this.saveTimeout) {
+      return; // Already scheduled
+    }
+    this.saveTimeout = setTimeout(() => {
+      this.saveNow();
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  // Immediate save - use when you need guaranteed persistence
+  saveNow(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = null;
+    }
+    if (!this.dirty) {
+      return;
+    }
+    this.dirty = false;
     this.ensureDir();
     writeFileSync(this.filePath, JSON.stringify(this.state, null, 2), 'utf-8');
+  }
+
+  // Flush any pending saves (call before shutdown)
+  flush(): void {
+    this.saveNow();
   }
 
   getState(): AppState {
@@ -108,7 +138,7 @@ export class StateStore {
   reset(): void {
     this.state = createInitialState();
     this.state.config.stateFilePath = this.filePath;
-    this.save();
+    this.saveNow(); // Immediate save for reset operations
   }
 }
 
