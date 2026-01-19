@@ -14,12 +14,16 @@ Claudeman is a Claude Code session manager with a web interface and autonomous R
 
 ```bash
 npm run build          # Compile TypeScript + copy static files to dist/web/
-npm run dev            # Run with tsx (no build needed)
 npm run clean          # Remove dist/
 
-npm link               # Make 'claudeman' globally available
-claudeman web          # Start web interface on port 3000
-claudeman web -p 8080  # Custom port
+# Start web server (pick one):
+npx tsx src/index.ts web           # Dev mode - no build needed (RECOMMENDED)
+npx tsx src/index.ts web -p 8080   # Dev mode with custom port
+node dist/index.js web             # After npm run build
+claudeman web                      # After npm link
+
+# NOTE: `npm run dev` runs the CLI (shows help), NOT the web server
+# You must specify the `web` subcommand to start the server
 ```
 
 ## Architecture
