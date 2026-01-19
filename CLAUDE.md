@@ -62,6 +62,14 @@ src/
 
 - **WebServer** (`src/web/server.ts`): Fastify server with REST API + SSE. Manages sessions, scheduled runs, respawn controllers, and case directories. Broadcasts all events to connected clients.
 
+### Type Definitions
+
+All TypeScript interfaces are centralized in `src/types.ts`:
+- `SessionState`, `TaskState`, `RalphLoopState` - Core state types
+- `RespawnConfig`, `AppConfig` - Configuration types
+- `ApiErrorCode`, `createErrorResponse()` - Consistent API error handling
+- Request/Response types for API endpoints (`CreateSessionRequest`, `QuickStartResponse`, etc.)
+
 ### Session Modes
 
 **One-Shot Mode** (`runPrompt(prompt)`):
