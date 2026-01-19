@@ -1,5 +1,22 @@
-export function generateClaudeMd(caseName: string, description: string = ''): string {
+import { existsSync, readFileSync } from 'node:fs';
+
+export function generateClaudeMd(caseName: string, description: string = '', templatePath?: string): string {
   const date = new Date().toISOString().split('T')[0];
+
+  // If a custom template path is provided and exists, use it
+  if (templatePath && existsSync(templatePath)) {
+    try {
+      let template = readFileSync(templatePath, 'utf-8');
+      // Replace placeholders with actual values
+      template = template.replace(/\[PROJECT_NAME\]/g, caseName);
+      template = template.replace(/\[PROJECT_DESCRIPTION\]/g, description || 'A new project');
+      template = template.replace(/\[DATE\]/g, date);
+      return template;
+    } catch (err) {
+      console.error(`Failed to read template from ${templatePath}:`, err);
+      // Fall through to default template
+    }
+  }
 
   return `# CLAUDE.md - Project Configuration
 

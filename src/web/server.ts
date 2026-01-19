@@ -577,7 +577,9 @@ export class WebServer extends EventEmitter {
         mkdirSync(casePath, { recursive: true });
         mkdirSync(join(casePath, 'src'), { recursive: true });
 
-        const claudeMd = generateClaudeMd(name, description || '');
+        // Read settings to get custom template path
+        const templatePath = this.getDefaultClaudeMdPath();
+        const claudeMd = generateClaudeMd(name, description || '', templatePath);
         writeFileSync(join(casePath, 'CLAUDE.md'), claudeMd);
 
         this.broadcast('case:created', { name, path: casePath });
@@ -620,7 +622,9 @@ export class WebServer extends EventEmitter {
           mkdirSync(casePath, { recursive: true });
           mkdirSync(join(casePath, 'src'), { recursive: true });
 
-          const claudeMd = generateClaudeMd(caseName, '');
+          // Read settings to get custom template path
+          const templatePath = this.getDefaultClaudeMdPath();
+          const claudeMd = generateClaudeMd(caseName, '', templatePath);
           writeFileSync(join(casePath, 'CLAUDE.md'), claudeMd);
 
           this.broadcast('case:created', { name: caseName, path: casePath });
@@ -804,6 +808,21 @@ export class WebServer extends EventEmitter {
 
     this.respawnTimers.set(sessionId, { timer, endAt, startedAt: now });
     this.broadcast('respawn:timerStarted', { sessionId, durationMinutes, endAt, startedAt: now });
+  }
+
+  // Helper to get custom CLAUDE.md template path from settings
+  private getDefaultClaudeMdPath(): string | undefined {
+    const settingsPath = join(homedir(), '.claudeman', 'settings.json');
+    try {
+      if (existsSync(settingsPath)) {
+        const content = readFileSync(settingsPath, 'utf-8');
+        const settings = JSON.parse(content);
+        return settings.defaultClaudeMdPath || undefined;
+      }
+    } catch (err) {
+      console.error('Failed to read settings:', err);
+    }
+    return undefined;
   }
 
   private async startScheduledRun(prompt: string, workingDir: string, durationMinutes: number): Promise<ScheduledRun> {
