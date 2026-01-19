@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir, totalmem, freemem, loadavg, cpus } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { Session, ClaudeMessage, type BackgroundTask } from '../session.js';
+import { Session, ClaudeMessage, type BackgroundTask, type InnerLoopState, type InnerTodoItem } from '../session.js';
 import { RespawnController, RespawnConfig, RespawnState } from '../respawn-controller.js';
 import { ScreenManager } from '../screen-manager.js';
 import { getStore } from '../state-store.js';
@@ -220,6 +220,25 @@ export class WebServer extends EventEmitter {
         textOutput: session.textOutput,
         messages: session.messages,
         errorBuffer: session.errorBuffer,
+      };
+    });
+
+    // Get inner state (Ralph loop + todos) for a session
+    this.app.get('/api/sessions/:id/inner-state', async (req) => {
+      const { id } = req.params as { id: string };
+      const session = this.sessions.get(id);
+
+      if (!session) {
+        return { success: false, error: 'Session not found' };
+      }
+
+      return {
+        success: true,
+        data: {
+          loop: session.innerLoopState,
+          todos: session.innerTodos,
+          todoStats: session.innerTodoStats,
+        }
       };
     });
 
@@ -850,6 +869,9 @@ export class WebServer extends EventEmitter {
     this.outputBatches.delete(sessionId);
     this.taskUpdateBatches.delete(sessionId);
 
+    // Clear inner state
+    this.store.removeInnerState(sessionId);
+
     // Stop session and remove listeners
     if (session) {
       session.removeAllListeners();
@@ -939,6 +961,23 @@ export class WebServer extends EventEmitter {
     session.on('autoCompact', (data: { tokens: number; threshold: number; prompt?: string }) => {
       this.broadcast('session:autoCompact', { sessionId: session.id, ...data });
       this.broadcast('session:updated', session.toDetailedState());
+    });
+
+    // Inner loop tracking events
+    session.on('innerLoopUpdate', (state: InnerLoopState) => {
+      this.broadcast('session:innerLoopUpdate', { sessionId: session.id, state });
+      // Persist inner state
+      this.store.updateInnerState(session.id, { loop: state });
+    });
+
+    session.on('innerTodoUpdate', (todos: InnerTodoItem[]) => {
+      this.broadcast('session:innerTodoUpdate', { sessionId: session.id, todos });
+      // Persist inner state
+      this.store.updateInnerState(session.id, { todos });
+    });
+
+    session.on('innerCompletionDetected', (phrase: string) => {
+      this.broadcast('session:innerCompletionDetected', { sessionId: session.id, phrase });
     });
   }
 

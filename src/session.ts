@@ -2,11 +2,13 @@ import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import * as pty from 'node-pty';
 import { execSync } from 'node:child_process';
-import { SessionState, SessionStatus, SessionConfig, ScreenSession } from './types.js';
+import { SessionState, SessionStatus, SessionConfig, ScreenSession, InnerLoopState, InnerTodoItem } from './types.js';
 import { TaskTracker, type BackgroundTask } from './task-tracker.js';
+import { InnerLoopTracker } from './inner-loop-tracker.js';
 import { ScreenManager } from './screen-manager.js';
 
 export type { BackgroundTask } from './task-tracker.js';
+export type { InnerLoopState, InnerTodoItem } from './types.js';
 
 // Maximum terminal buffer size in characters (default 5MB of text)
 const MAX_TERMINAL_BUFFER_SIZE = 5 * 1024 * 1024;
@@ -64,6 +66,10 @@ export interface SessionEvents {
   autoClear: (data: { tokens: number; threshold: number }) => void;
   // Auto-compact event
   autoCompact: (data: { tokens: number; threshold: number; prompt?: string }) => void;
+  // Inner loop tracking events (Claude Code running inside this session)
+  innerLoopUpdate: (state: InnerLoopState) => void;
+  innerTodoUpdate: (todos: InnerTodoItem[]) => void;
+  innerCompletionDetected: (phrase: string) => void;
 }
 
 export type SessionMode = 'claude' | 'shell';
@@ -114,6 +120,9 @@ export class Session extends EventEmitter {
   private _screenSession: ScreenSession | null = null;
   private _useScreen: boolean = false;
 
+  // Inner loop tracking (Ralph Wiggum loops and todo lists inside Claude Code)
+  private _innerLoopTracker: InnerLoopTracker;
+
   constructor(config: Partial<SessionConfig> & {
     workingDir: string;
     mode?: SessionMode;
@@ -137,6 +146,12 @@ export class Session extends EventEmitter {
     this._taskTracker.on('taskUpdated', (task) => this.emit('taskUpdated', task));
     this._taskTracker.on('taskCompleted', (task) => this.emit('taskCompleted', task));
     this._taskTracker.on('taskFailed', (task, error) => this.emit('taskFailed', task, error));
+
+    // Initialize inner loop tracker and forward events
+    this._innerLoopTracker = new InnerLoopTracker();
+    this._innerLoopTracker.on('loopUpdate', (state) => this.emit('innerLoopUpdate', state));
+    this._innerLoopTracker.on('todoUpdate', (todos) => this.emit('innerTodoUpdate', todos));
+    this._innerLoopTracker.on('completionDetected', (phrase) => this.emit('innerCompletionDetected', phrase));
   }
 
   get status(): SessionStatus {
@@ -205,6 +220,23 @@ export class Session extends EventEmitter {
 
   get taskStats(): { total: number; running: number; completed: number; failed: number } {
     return this._taskTracker.getStats();
+  }
+
+  // Inner loop tracking getters
+  get innerLoopTracker(): InnerLoopTracker {
+    return this._innerLoopTracker;
+  }
+
+  get innerLoopState(): InnerLoopState {
+    return this._innerLoopTracker.loopState;
+  }
+
+  get innerTodos(): InnerTodoItem[] {
+    return this._innerLoopTracker.todos;
+  }
+
+  get innerTodoStats(): { total: number; pending: number; inProgress: number; completed: number } {
+    return this._innerLoopTracker.getTodoStats();
   }
 
   // Token tracking getters and setters
@@ -323,6 +355,10 @@ export class Session extends EventEmitter {
         enabled: this._autoClearEnabled,
         threshold: this._autoClearThreshold,
       },
+      // Inner loop tracking state
+      innerLoop: this._innerLoopTracker.loopState,
+      innerTodos: this._innerLoopTracker.todos,
+      innerTodoStats: this._innerLoopTracker.getTodoStats(),
     };
   }
 
@@ -407,6 +443,9 @@ export class Session extends EventEmitter {
 
       this.emit('terminal', data);
       this.emit('output', data);
+
+      // Forward to inner loop tracker to detect Ralph loops and todos
+      this._innerLoopTracker.processTerminalData(data);
 
       // Parse token count from status line (e.g., "123.4k tokens" or "5234 tokens")
       this.parseTokensFromStatusLine(data);
@@ -996,5 +1035,6 @@ export class Session extends EventEmitter {
     this._errorBuffer = '';
     this._messages = [];
     this._taskTracker.clear();
+    this._innerLoopTracker.clear();
   }
 }

@@ -1,0 +1,396 @@
+import { EventEmitter } from 'node:events';
+import {
+  InnerLoopState,
+  InnerTodoItem,
+  InnerTodoStatus,
+  createInitialInnerLoopState,
+} from './types.js';
+
+// Maximum number of todo items to track per session
+const MAX_TODO_ITEMS = 50;
+// Todo items older than this will be auto-expired (1 hour)
+const TODO_EXPIRY_MS = 60 * 60 * 1000;
+
+// Pre-compiled regex patterns for performance (avoid re-compilation on each call)
+
+// Completion phrase detection: <promise>PHRASE</promise>
+const PROMISE_PATTERN = /<promise>([^<]+)<\/promise>/;
+
+// Todo item patterns - multiple formats Claude Code uses
+// Format 1: Checkbox format in markdown: "- [ ] Task" or "- [x] Task"
+const TODO_CHECKBOX_PATTERN = /^[-*]\s*\[([xX ])\]\s+(.+)$/gm;
+// Format 2: Todo with indicator icons: "Todo: ☐ Task", "Todo: ◐ Task", "Todo: ✓ Task"
+const TODO_INDICATOR_PATTERN = /Todo:\s*(☐|◐|✓|⏳|✅|⌛|🔄)\s+(.+)/g;
+// Format 3: Status in parentheses: "(pending)", "(in_progress)", "(completed)"
+const TODO_STATUS_PATTERN = /[-*]\s*(.+?)\s+\((pending|in_progress|completed)\)/g;
+
+// Loop status patterns
+const LOOP_START_PATTERN = /Loop started at|Starting.*loop|Ralph loop started|<promise>([^<]+)<\/promise>/i;
+const ELAPSED_TIME_PATTERN = /Elapsed:\s*(\d+(?:\.\d+)?)\s*hours?/i;
+const CYCLE_PATTERN = /cycle\s*#?(\d+)|respawn cycle #(\d+)/i;
+
+// ANSI escape code removal for cleaner parsing
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
+
+export interface InnerLoopTrackerEvents {
+  loopUpdate: (state: InnerLoopState) => void;
+  todoUpdate: (todos: InnerTodoItem[]) => void;
+  completionDetected: (phrase: string) => void;
+}
+
+/**
+ * InnerLoopTracker parses terminal output from Claude Code sessions to detect:
+ * 1. Ralph Wiggum loop state (active, completion phrase, cycle count)
+ * 2. Todo list items from the TodoWrite tool
+ */
+export class InnerLoopTracker extends EventEmitter {
+  private _loopState: InnerLoopState;
+  private _todos: Map<string, InnerTodoItem> = new Map();
+  private _lineBuffer: string = '';
+
+  constructor() {
+    super();
+    this._loopState = createInitialInnerLoopState();
+  }
+
+  get loopState(): InnerLoopState {
+    return { ...this._loopState };
+  }
+
+  get todos(): InnerTodoItem[] {
+    return Array.from(this._todos.values());
+  }
+
+  /**
+   * Process raw terminal data to detect inner loop patterns
+   */
+  processTerminalData(data: string): void {
+    // Remove ANSI escape codes for cleaner parsing
+    const cleanData = data.replace(ANSI_ESCAPE_PATTERN, '');
+
+    // Buffer data for line-based processing
+    this._lineBuffer += cleanData;
+
+    // Process complete lines
+    const lines = this._lineBuffer.split('\n');
+    this._lineBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      this.processLine(line);
+    }
+
+    // Also check the current buffer for multi-line patterns
+    this.checkMultiLinePatterns(cleanData);
+
+    // Cleanup expired todos
+    this.cleanupExpiredTodos();
+  }
+
+  /**
+   * Process a single line of terminal output
+   */
+  private processLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Check for completion phrase
+    this.detectCompletionPhrase(trimmed);
+
+    // Check for loop start/status
+    this.detectLoopStatus(trimmed);
+
+    // Check for todo items
+    this.detectTodoItems(trimmed);
+  }
+
+  /**
+   * Check for multi-line patterns in the data chunk
+   */
+  private checkMultiLinePatterns(data: string): void {
+    // Completion phrase can span lines, so check the whole chunk
+    const promiseMatch = data.match(PROMISE_PATTERN);
+    if (promiseMatch) {
+      this.handleCompletionPhrase(promiseMatch[1]);
+    }
+  }
+
+  /**
+   * Detect <promise>PHRASE</promise> completion phrases
+   */
+  private detectCompletionPhrase(line: string): void {
+    const match = line.match(PROMISE_PATTERN);
+    if (match) {
+      this.handleCompletionPhrase(match[1]);
+    }
+  }
+
+  /**
+   * Handle a detected completion phrase
+   */
+  private handleCompletionPhrase(phrase: string): void {
+    const wasActive = this._loopState.active;
+
+    // If we see a completion phrase, mark loop as completed
+    this._loopState.completionPhrase = phrase;
+    this._loopState.active = false;
+    this._loopState.lastActivity = Date.now();
+
+    this.emit('completionDetected', phrase);
+    this.emit('loopUpdate', this.loopState);
+  }
+
+  /**
+   * Detect loop start and status indicators
+   */
+  private detectLoopStatus(line: string): void {
+    // Check for loop start
+    if (LOOP_START_PATTERN.test(line)) {
+      // Check if this is a promise match (loop ending) vs loop start
+      if (!PROMISE_PATTERN.test(line)) {
+        // This is a loop start indicator
+        if (!this._loopState.active) {
+          this._loopState.active = true;
+          this._loopState.startedAt = Date.now();
+          this._loopState.cycleCount = 0;
+          this._loopState.elapsedHours = null;
+          this._loopState.lastActivity = Date.now();
+          this.emit('loopUpdate', this.loopState);
+        }
+      }
+    }
+
+    // Check for elapsed time
+    const elapsedMatch = line.match(ELAPSED_TIME_PATTERN);
+    if (elapsedMatch) {
+      this._loopState.elapsedHours = parseFloat(elapsedMatch[1]);
+      this._loopState.lastActivity = Date.now();
+      this.emit('loopUpdate', this.loopState);
+    }
+
+    // Check for cycle count
+    const cycleMatch = line.match(CYCLE_PATTERN);
+    if (cycleMatch) {
+      const cycleNum = parseInt(cycleMatch[1] || cycleMatch[2]);
+      if (!isNaN(cycleNum) && cycleNum > this._loopState.cycleCount) {
+        this._loopState.cycleCount = cycleNum;
+        this._loopState.lastActivity = Date.now();
+        this.emit('loopUpdate', this.loopState);
+      }
+    }
+  }
+
+  /**
+   * Detect todo items in various formats
+   */
+  private detectTodoItems(line: string): void {
+    let updated = false;
+
+    // Format 1: Checkbox format "- [ ] Task" or "- [x] Task"
+    TODO_CHECKBOX_PATTERN.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = TODO_CHECKBOX_PATTERN.exec(line)) !== null) {
+      const checked = match[1].toLowerCase() === 'x';
+      const content = match[2].trim();
+      const status: InnerTodoStatus = checked ? 'completed' : 'pending';
+      this.upsertTodo(content, status);
+      updated = true;
+    }
+
+    // Format 2: Todo with indicator icons
+    TODO_INDICATOR_PATTERN.lastIndex = 0;
+    while ((match = TODO_INDICATOR_PATTERN.exec(line)) !== null) {
+      const icon = match[1];
+      const content = match[2].trim();
+      const status = this.iconToStatus(icon);
+      this.upsertTodo(content, status);
+      updated = true;
+    }
+
+    // Format 3: Status in parentheses
+    TODO_STATUS_PATTERN.lastIndex = 0;
+    while ((match = TODO_STATUS_PATTERN.exec(line)) !== null) {
+      const content = match[1].trim();
+      const status = match[2] as InnerTodoStatus;
+      this.upsertTodo(content, status);
+      updated = true;
+    }
+
+    if (updated) {
+      this.emit('todoUpdate', this.todos);
+    }
+  }
+
+  /**
+   * Convert todo icon to status
+   */
+  private iconToStatus(icon: string): InnerTodoStatus {
+    switch (icon) {
+      case '✓':
+      case '✅':
+        return 'completed';
+      case '◐':
+      case '⏳':
+      case '⌛':
+      case '🔄':
+        return 'in_progress';
+      case '☐':
+      default:
+        return 'pending';
+    }
+  }
+
+  /**
+   * Add or update a todo item
+   */
+  private upsertTodo(content: string, status: InnerTodoStatus): void {
+    // Generate a stable ID from content (simple hash)
+    const id = this.generateTodoId(content);
+
+    const existing = this._todos.get(id);
+    if (existing) {
+      // Update existing todo
+      existing.status = status;
+      existing.detectedAt = Date.now();
+    } else {
+      // Add new todo
+      if (this._todos.size >= MAX_TODO_ITEMS) {
+        // Remove oldest todo to make room
+        const oldest = this.findOldestTodo();
+        if (oldest) {
+          this._todos.delete(oldest.id);
+        }
+      }
+
+      this._todos.set(id, {
+        id,
+        content,
+        status,
+        detectedAt: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Generate a stable ID from todo content
+   */
+  private generateTodoId(content: string): string {
+    // Simple hash based on content
+    let hash = 0;
+    for (let i = 0; i < content.length; i++) {
+      const char = content.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return `todo-${Math.abs(hash).toString(36)}`;
+  }
+
+  /**
+   * Find the oldest todo item
+   */
+  private findOldestTodo(): InnerTodoItem | undefined {
+    let oldest: InnerTodoItem | undefined;
+    for (const todo of this._todos.values()) {
+      if (!oldest || todo.detectedAt < oldest.detectedAt) {
+        oldest = todo;
+      }
+    }
+    return oldest;
+  }
+
+  /**
+   * Remove expired todo items
+   */
+  private cleanupExpiredTodos(): void {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    for (const [id, todo] of this._todos) {
+      if (now - todo.detectedAt > TODO_EXPIRY_MS) {
+        toDelete.push(id);
+      }
+    }
+
+    if (toDelete.length > 0) {
+      for (const id of toDelete) {
+        this._todos.delete(id);
+      }
+      this.emit('todoUpdate', this.todos);
+    }
+  }
+
+  /**
+   * Mark the loop as started (can be called externally)
+   */
+  startLoop(completionPhrase?: string): void {
+    this._loopState.active = true;
+    this._loopState.startedAt = Date.now();
+    this._loopState.cycleCount = 0;
+    this._loopState.elapsedHours = null;
+    this._loopState.lastActivity = Date.now();
+    if (completionPhrase) {
+      this._loopState.completionPhrase = completionPhrase;
+    }
+    this.emit('loopUpdate', this.loopState);
+  }
+
+  /**
+   * Mark the loop as stopped
+   */
+  stopLoop(): void {
+    this._loopState.active = false;
+    this._loopState.lastActivity = Date.now();
+    this.emit('loopUpdate', this.loopState);
+  }
+
+  /**
+   * Clear all state (e.g., when session is cleared)
+   */
+  clear(): void {
+    this._loopState = createInitialInnerLoopState();
+    this._todos.clear();
+    this._lineBuffer = '';
+    this.emit('loopUpdate', this.loopState);
+    this.emit('todoUpdate', this.todos);
+  }
+
+  /**
+   * Get todo completion stats
+   */
+  getTodoStats(): { total: number; pending: number; inProgress: number; completed: number } {
+    let pending = 0;
+    let inProgress = 0;
+    let completed = 0;
+
+    for (const todo of this._todos.values()) {
+      switch (todo.status) {
+        case 'pending':
+          pending++;
+          break;
+        case 'in_progress':
+          inProgress++;
+          break;
+        case 'completed':
+          completed++;
+          break;
+      }
+    }
+
+    return {
+      total: this._todos.size,
+      pending,
+      inProgress,
+      completed,
+    };
+  }
+
+  /**
+   * Restore state from persisted data
+   */
+  restoreState(loopState: InnerLoopState, todos: InnerTodoItem[]): void {
+    this._loopState = { ...loopState };
+    this._todos.clear();
+    for (const todo of todos) {
+      this._todos.set(todo.id, { ...todo });
+    }
+  }
+}

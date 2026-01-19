@@ -72,6 +72,15 @@
       <button class="btn-icon-only" onclick="app.stopRespawn()" title="Stop Respawn">&#x25A0;</button>
     </div>
 
+    <!-- Inner State Panel (Ralph Loop + Todo List detection) -->
+    <div class="inner-state-panel collapsed" id="innerStatePanel" style="display: none;">
+      <div class="inner-state-header" onclick="app.toggleInnerStatePanel()">
+        <span class="inner-state-toggle" id="innerStateToggle">&#x25B6;</span>
+        <span class="inner-state-title">Inner State</span>
+      </div>
+      <div class="inner-state-content" id="innerStateContent"></div>
+    </div>
+
     <!-- Main Terminal Area -->
     <main class="main">
       <div class="terminal-container" id="terminalContainer"></div>

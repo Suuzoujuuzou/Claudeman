@@ -447,6 +447,168 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* Inner State Panel (Ralph Loop + Todo List) */
+.inner-state-panel {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.inner-state-panel.collapsed .inner-state-content {
+  max-height: 28px;
+  overflow: hidden;
+}
+
+.inner-state-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.inner-state-header:hover {
+  background: var(--bg-hover);
+}
+
+.inner-state-toggle {
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+}
+
+.inner-state-title {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.inner-state-content {
+  padding: 0 0.75rem 0.5rem;
+  transition: max-height 0.2s;
+}
+
+.inner-state-panel.collapsed .inner-state-content {
+  padding: 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Loop status in summary view */
+.inner-loop-status {
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+
+.inner-loop-status.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--accent-hover);
+}
+
+.inner-loop-status.completed {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--green);
+}
+
+.inner-todo-summary {
+  color: var(--text-dim);
+}
+
+/* Loop details in expanded view */
+.inner-loop-details {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 4px;
+  border-left: 2px solid var(--accent);
+}
+
+.inner-loop-active {
+  color: var(--accent-hover);
+}
+
+.inner-loop-active code {
+  background: var(--bg-input);
+  padding: 0.1rem 0.3rem;
+  border-radius: 2px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 0.7rem;
+}
+
+.inner-loop-elapsed,
+.inner-loop-cycles {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  margin-top: 0.25rem;
+}
+
+.inner-loop-completed {
+  color: var(--green);
+}
+
+.inner-loop-completed code {
+  background: var(--bg-input);
+  padding: 0.1rem 0.3rem;
+  border-radius: 2px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 0.7rem;
+}
+
+/* Todo list in expanded view */
+.inner-todo-list {
+  padding: 0.5rem;
+  background: var(--bg-input);
+  border-radius: 4px;
+}
+
+.inner-todo-header {
+  color: var(--text);
+  font-weight: 500;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.inner-todo-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.inner-todo-items li {
+  padding: 0.25rem 0;
+  color: var(--text-dim);
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inner-todo-items li.todo-completed {
+  color: var(--green);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.inner-todo-items li.todo-in-progress {
+  color: var(--accent-hover);
+}
+
+.inner-todo-items li.todo-pending {
+  color: var(--text-dim);
+}
+
+.inner-state-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* Main - Terminal Area */
 .main {
   flex: 1;

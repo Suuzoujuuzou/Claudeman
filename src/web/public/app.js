@@ -19,6 +19,10 @@ class ClaudemanApp {
     this.pendingCloseSessionId = null; // Session pending close confirmation
     this.screenSessions = []; // Screen sessions for process monitor
 
+    // Inner loop/todo state per session
+    this.innerStates = new Map(); // Map<sessionId, { loop, todos }>
+    this.innerStatePanelCollapsed = true; // Default to collapsed
+
     // Terminal write batching
     this.pendingWrites = '';
     this.writeFrameScheduled = false;
@@ -480,6 +484,28 @@ class ClaudemanApp {
         this.renderScreenSessions();
       }
     });
+
+    // Inner loop/todo events
+    this.eventSource.addEventListener('session:innerLoopUpdate', (e) => {
+      const data = JSON.parse(e.data);
+      this.updateInnerState(data.sessionId, { loop: data.state });
+    });
+
+    this.eventSource.addEventListener('session:innerTodoUpdate', (e) => {
+      const data = JSON.parse(e.data);
+      this.updateInnerState(data.sessionId, { todos: data.todos });
+    });
+
+    this.eventSource.addEventListener('session:innerCompletionDetected', (e) => {
+      const data = JSON.parse(e.data);
+      this.showToast(`Loop completed: ${data.phrase}`, 'success');
+      // Update inner state to mark loop as inactive
+      const existing = this.innerStates.get(data.sessionId) || {};
+      if (existing.loop) {
+        existing.loop.active = false;
+        this.updateInnerState(data.sessionId, existing);
+      }
+    });
   }
 
   setConnectionStatus(status) {
@@ -491,7 +517,17 @@ class ClaudemanApp {
 
   handleInit(data) {
     this.sessions.clear();
-    data.sessions.forEach(s => this.sessions.set(s.id, s));
+    this.innerStates.clear();
+    data.sessions.forEach(s => {
+      this.sessions.set(s.id, s);
+      // Load inner state from session data
+      if (s.innerLoop || s.innerTodos) {
+        this.innerStates.set(s.id, {
+          loop: s.innerLoop || null,
+          todos: s.innerTodos || []
+        });
+      }
+    });
 
     if (data.respawnStatus) {
       this.respawnStatus = data.respawnStatus;
@@ -627,6 +663,16 @@ class ClaudemanApp {
         this.renderTaskPanel();
       }
 
+      // Update inner state panel for this session
+      const session = this.sessions.get(sessionId);
+      if (session && (session.innerLoop || session.innerTodos)) {
+        this.updateInnerState(sessionId, {
+          loop: session.innerLoop,
+          todos: session.innerTodos
+        });
+      }
+      this.renderInnerStatePanel();
+
       this.terminal.focus();
     } catch (err) {
       console.error('Failed to load session terminal:', err);
@@ -638,6 +684,7 @@ class ClaudemanApp {
       await fetch(`/api/sessions/${sessionId}?killScreen=${killScreen}`, { method: 'DELETE' });
       this.sessions.delete(sessionId);
       this.terminalBuffers.delete(sessionId);
+      this.innerStates.delete(sessionId);
 
       if (this.activeSessionId === sessionId) {
         this.activeSessionId = null;
@@ -1721,6 +1768,146 @@ class ClaudemanApp {
       // The task tree from server already has the structure we need
     }
     return result;
+  }
+
+  // ========== Inner State (Ralph Loop & Todo List) ==========
+
+  updateInnerState(sessionId, updates) {
+    const existing = this.innerStates.get(sessionId) || { loop: null, todos: [] };
+    const updated = { ...existing, ...updates };
+    this.innerStates.set(sessionId, updated);
+
+    // Re-render if this is the active session
+    if (sessionId === this.activeSessionId) {
+      this.renderInnerStatePanel();
+    }
+  }
+
+  toggleInnerStatePanel() {
+    this.innerStatePanelCollapsed = !this.innerStatePanelCollapsed;
+    this.renderInnerStatePanel();
+  }
+
+  renderInnerStatePanel() {
+    const panel = this.$('innerStatePanel');
+    const content = this.$('innerStateContent');
+    const toggle = this.$('innerStateToggle');
+
+    if (!panel) return; // Panel not in DOM yet
+
+    const state = this.innerStates.get(this.activeSessionId);
+
+    // Check if there's anything to show
+    const hasLoop = state?.loop?.active || state?.loop?.completionPhrase;
+    const hasTodos = state?.todos?.length > 0;
+
+    if (!hasLoop && !hasTodos) {
+      panel.style.display = 'none';
+      return;
+    }
+
+    panel.style.display = '';
+
+    if (this.innerStatePanelCollapsed) {
+      panel.classList.add('collapsed');
+      toggle.innerHTML = '&#x25B6;'; // Right arrow
+      content.innerHTML = this.renderInnerStateSummary(state);
+    } else {
+      panel.classList.remove('collapsed');
+      toggle.innerHTML = '&#x25BC;'; // Down arrow
+      content.innerHTML = this.renderInnerStateExpanded(state);
+    }
+  }
+
+  renderInnerStateSummary(state) {
+    const parts = [];
+
+    // Loop status
+    if (state?.loop) {
+      const loop = state.loop;
+      if (loop.active) {
+        let loopText = '🔄 Loop';
+        if (loop.completionPhrase) {
+          loopText += `: "${this.escapeHtml(loop.completionPhrase)}"`;
+        }
+        if (loop.elapsedHours !== null) {
+          loopText += ` (${loop.elapsedHours.toFixed(1)}h)`;
+        }
+        parts.push(`<span class="inner-loop-status active">${loopText}</span>`);
+      } else if (loop.completionPhrase) {
+        parts.push(`<span class="inner-loop-status completed">✓ ${this.escapeHtml(loop.completionPhrase)}</span>`);
+      }
+    }
+
+    // Todo summary
+    if (state?.todos?.length > 0) {
+      const completed = state.todos.filter(t => t.status === 'completed').length;
+      const total = state.todos.length;
+      const inProgress = state.todos.filter(t => t.status === 'in_progress').length;
+      let todoText = `Tasks: ${completed}/${total}`;
+      if (inProgress > 0) {
+        todoText += ` (${inProgress} in progress)`;
+      }
+      parts.push(`<span class="inner-todo-summary">${todoText}</span>`);
+    }
+
+    return parts.join(' | ');
+  }
+
+  renderInnerStateExpanded(state) {
+    let html = '';
+
+    // Loop details
+    if (state?.loop) {
+      const loop = state.loop;
+      html += '<div class="inner-loop-details">';
+      if (loop.active) {
+        html += `<div class="inner-loop-active">🔄 <strong>Loop Active</strong>`;
+        if (loop.completionPhrase) {
+          html += ` - waiting for: <code>${this.escapeHtml(loop.completionPhrase)}</code>`;
+        }
+        html += '</div>';
+        if (loop.elapsedHours !== null) {
+          html += `<div class="inner-loop-elapsed">Elapsed: ${loop.elapsedHours.toFixed(2)} hours</div>`;
+        }
+        if (loop.cycleCount > 0) {
+          html += `<div class="inner-loop-cycles">Cycle: #${loop.cycleCount}</div>`;
+        }
+      } else if (loop.completionPhrase) {
+        html += `<div class="inner-loop-completed">✓ Completed: <code>${this.escapeHtml(loop.completionPhrase)}</code></div>`;
+      }
+      html += '</div>';
+    }
+
+    // Todo list
+    if (state?.todos?.length > 0) {
+      const completed = state.todos.filter(t => t.status === 'completed').length;
+      const total = state.todos.length;
+
+      html += '<div class="inner-todo-list">';
+      html += `<div class="inner-todo-header">Tasks (${completed}/${total} complete)</div>`;
+      html += '<ul class="inner-todo-items">';
+
+      for (const todo of state.todos) {
+        const icon = this.getTodoIcon(todo.status);
+        const statusClass = `todo-${todo.status.replace('_', '-')}`;
+        html += `<li class="${statusClass}">${icon} ${this.escapeHtml(todo.content)}</li>`;
+      }
+
+      html += '</ul>';
+      html += '</div>';
+    }
+
+    return html || '<div class="inner-state-empty">No inner state data</div>';
+  }
+
+  getTodoIcon(status) {
+    switch (status) {
+      case 'completed': return '✓';
+      case 'in_progress': return '◐';
+      case 'pending':
+      default: return '☐';
+    }
   }
 
   // ========== Screen Sessions (in Monitor Panel) ==========

@@ -245,6 +245,58 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
 };
 
+// ========== Inner Loop Tracking Types ==========
+// Track Ralph Wiggum loops and todo lists running inside Claude Code sessions
+
+export type InnerTodoStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface InnerLoopState {
+  active: boolean;
+  completionPhrase: string | null;
+  startedAt: number | null;
+  cycleCount: number;
+  lastActivity: number;
+  elapsedHours: number | null;
+}
+
+export interface InnerTodoItem {
+  id: string;
+  content: string;
+  status: InnerTodoStatus;
+  detectedAt: number;
+}
+
+export interface InnerSessionState {
+  sessionId: string;
+  loop: InnerLoopState;
+  todos: InnerTodoItem[];
+  lastUpdated: number;
+}
+
+export interface InnerStateRecord {
+  [sessionId: string]: InnerSessionState;
+}
+
+export function createInitialInnerLoopState(): InnerLoopState {
+  return {
+    active: false,
+    completionPhrase: null,
+    startedAt: null,
+    cycleCount: 0,
+    lastActivity: Date.now(),
+    elapsedHours: null,
+  };
+}
+
+export function createInitialInnerSessionState(sessionId: string): InnerSessionState {
+  return {
+    sessionId,
+    loop: createInitialInnerLoopState(),
+    todos: [],
+    lastUpdated: Date.now(),
+  };
+}
+
 export function createInitialState(): AppState {
   return {
     sessions: {},
