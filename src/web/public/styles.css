@@ -111,7 +111,7 @@ body {
 }
 
 .session-tab .tab-status.idle { background: var(--green); }
-.session-tab .tab-status.busy { background: var(--yellow); animation: pulse 1.5s infinite; }
+.session-tab .tab-status.busy { background: var(--green); animation: pulse 1.5s infinite; }
 .session-tab .tab-status.error { background: var(--red); }
 
 .session-tab .tab-name {
