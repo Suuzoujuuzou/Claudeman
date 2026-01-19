@@ -85,13 +85,6 @@
           </button>
           <input type="text" id="dirInput" class="toolbar-input hidden" placeholder="Working directory..." onblur="app.hideDirInput()">
         </div>
-
-        <!-- Respawn Settings -->
-        <div class="toolbar-group">
-          <button class="btn-toolbar" onclick="app.toggleRespawnPanel()" id="respawnToggleBtn" title="Respawn settings">
-            Respawn
-          </button>
-        </div>
       </div>
 
       <div class="toolbar-right">
@@ -258,12 +251,18 @@
             <input type="text" id="sessionNameInput" placeholder="Enter session name...">
           </div>
           <div class="form-row">
-            <label>Mode</label>
-            <div class="session-mode-display" id="sessionModeDisplay">Claude</div>
-          </div>
-          <div class="form-row">
             <label>Directory</label>
             <div class="session-dir-display" id="sessionDirDisplay">/path/to/dir</div>
+          </div>
+          <div class="form-row session-respawn-section" id="sessionRespawnSection">
+            <label>Respawn Controller</label>
+            <div class="session-respawn-status" id="sessionRespawnStatus">
+              <span class="respawn-status-text">Not active</span>
+            </div>
+            <div class="session-respawn-actions">
+              <button class="btn-toolbar btn-sm" onclick="app.toggleRespawnPanel(); app.closeSessionOptions();" id="sessionConfigRespawnBtn">Configure Respawn</button>
+              <button class="btn-toolbar btn-sm btn-danger" onclick="app.stopRespawnFromOptions()" id="sessionStopRespawnBtn" style="display: none;">Stop Respawn</button>
+            </div>
           </div>
         </div>
         <div class="form-actions">

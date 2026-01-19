@@ -1167,12 +1167,57 @@ class ClaudemanApp {
     this.editingSessionId = sessionId;
 
     document.getElementById('sessionNameInput').value = session.name || '';
-    document.getElementById('sessionModeDisplay').textContent = session.mode === 'shell' ? 'Shell' : 'Claude';
     document.getElementById('sessionDirDisplay').textContent = session.workingDir || 'Unknown';
+
+    // Update respawn status display
+    const respawnStatus = document.getElementById('sessionRespawnStatus');
+    const stopBtn = document.getElementById('sessionStopRespawnBtn');
+    const configBtn = document.getElementById('sessionConfigRespawnBtn');
+
+    if (this.respawnStatus[sessionId]) {
+      respawnStatus.classList.add('active');
+      respawnStatus.querySelector('.respawn-status-text').textContent =
+        `Active (${this.respawnStatus[sessionId].state || 'running'})`;
+      stopBtn.style.display = '';
+      configBtn.textContent = 'Reconfigure';
+    } else {
+      respawnStatus.classList.remove('active');
+      respawnStatus.querySelector('.respawn-status-text').textContent = 'Not active';
+      stopBtn.style.display = 'none';
+      configBtn.textContent = 'Configure Respawn';
+    }
+
+    // Only show respawn section for claude mode sessions with a running process
+    const respawnSection = document.getElementById('sessionRespawnSection');
+    if (session.mode === 'claude' && session.pid) {
+      respawnSection.style.display = '';
+    } else {
+      respawnSection.style.display = 'none';
+    }
+
     document.getElementById('sessionOptionsModal').classList.add('active');
 
     // Focus the name input
     setTimeout(() => document.getElementById('sessionNameInput').focus(), 100);
+  }
+
+  async stopRespawnFromOptions() {
+    if (!this.editingSessionId) return;
+    try {
+      await fetch(`/api/sessions/${this.editingSessionId}/respawn/stop`, { method: 'POST' });
+      delete this.respawnTimers[this.editingSessionId];
+
+      // Update the modal display
+      const respawnStatus = document.getElementById('sessionRespawnStatus');
+      respawnStatus.classList.remove('active');
+      respawnStatus.querySelector('.respawn-status-text').textContent = 'Not active';
+      document.getElementById('sessionStopRespawnBtn').style.display = 'none';
+      document.getElementById('sessionConfigRespawnBtn').textContent = 'Configure Respawn';
+
+      this.showToast('Respawn stopped', 'success');
+    } catch (err) {
+      this.showToast('Failed to stop respawn', 'error');
+    }
   }
 
   closeSessionOptions() {

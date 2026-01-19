@@ -8,6 +8,8 @@ Claudeman is a Claude Code session manager with a web interface and autonomous R
 
 **Tech Stack**: TypeScript, Node.js, Fastify, Server-Sent Events, node-pty
 
+**Requirements**: Node.js 18+, Claude CLI (`claude`) installed and available in PATH
+
 ## Commands
 
 ```bash
@@ -18,13 +20,6 @@ npm run clean          # Remove dist/
 npm link               # Make 'claudeman' globally available
 claudeman web          # Start web interface on port 3000
 claudeman web -p 8080  # Custom port
-
-# Testing
-npm run test           # Run all tests once
-npm run test:watch     # Run tests in watch mode
-npm run test:coverage  # Run tests with coverage report
-npx vitest run test/session.test.ts           # Run single test file
-npx vitest run -t "should create session"     # Run tests matching pattern
 ```
 
 ## Architecture
@@ -314,7 +309,29 @@ GET  /api/events                      # SSE stream (real-time events)
 GET  /api/status                      # Full state snapshot (sessions + scheduled + respawn)
 ```
 
+## Testing
+
+Tests use Vitest and auto-discover `*.test.ts` files in the `test/` directory:
+
+```bash
+npm run test                              # Run all tests once
+npm run test:watch                        # Watch mode
+npm run test:coverage                     # With coverage report
+npx vitest run test/session.test.ts       # Single file
+npx vitest run -t "should create session" # By pattern
+```
+
+## Frontend
+
+The web UI (`src/web/public/`) uses vanilla JavaScript with:
+- **xterm.js**: Terminal emulator with WebGL renderer for 60fps performance
+- **xterm-addon-fit**: Auto-resize terminal to container
+- **Server-Sent Events**: Real-time updates from `/api/events`
+- **No build step**: Static files served directly by Fastify
+
 ## Pending Tasks
+
+**Note to Claude: Do NOT remove or modify this section during /init. These tasks are actively being worked on by other sessions.**
 
 - [ ] Remove the "New Session" tab and add a gear icon (⚙️) in the top right corner for app settings
 - [ ] Add confirmation dialog when clicking "x" on a session tab - warn user that the screen session behind will be closed

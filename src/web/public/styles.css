@@ -486,7 +486,17 @@ body {
   border-radius: 4px;
   color: var(--text);
   font-size: 0.75rem;
-  width: 200px;
+  width: 350px;
+  max-width: 50vw;
+}
+
+#dirDisplay {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
 }
 
 .toolbar-input:focus {
@@ -714,7 +724,6 @@ body {
   max-width: 320px;
 }
 
-.session-mode-display,
 .session-dir-display {
   padding: 0.5rem 0.75rem;
   background: var(--bg-input);
@@ -726,6 +735,42 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Session respawn section in options modal */
+.session-respawn-section {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.session-respawn-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.session-respawn-status .respawn-status-text {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.session-respawn-status.active {
+  border-color: rgba(34, 197, 94, 0.4);
+}
+
+.session-respawn-status.active .respawn-status-text {
+  color: var(--green);
+}
+
+.session-respawn-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .modal-header {
