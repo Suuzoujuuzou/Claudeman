@@ -320,3 +320,5 @@ GET  /api/status                      # Full state snapshot (sessions + schedule
 - [ ] Add confirmation dialog when clicking "x" on a session tab - warn user that the screen session behind will be closed
 - [ ] In settings: add option to configure a default CLAUDE.md file path (e.g. /home/arkon/default/CLAUDE.md) that will be used for new sessions/cases
 - [ ] Wrap each session in a GNU screen session so they persist even if webinterface stops. Track active screen sessions in a file (~/.claudeman/screens.json), allow killing them after webserver restart, and show them in the background tasks tab for monitoring. Include a detailed task manager view: show memory usage (MB), CPU usage, child processes spawned per session - make it very responsive with real-time updates
+- [ ] UI cleanup: Move respawn logic controls into session options panel and remove from below. Remove "mode claude" label from tab settings (not needed). Fix directory display to show full path - currently too narrow for even short paths
+- [ ] Fix terminal focus escape sequences: filter out `^[[I` and `^[[O` (focus in/out) ANSI codes that appear when opening Claude console
