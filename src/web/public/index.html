@@ -25,16 +25,16 @@
       </div>
 
       <div class="header-right">
-        <div class="connection-status" id="connectionStatus">
-          <span class="status-dot"></span>
-          <span class="status-text">Connecting</span>
-        </div>
-        <div class="header-tokens" id="headerTokens" title="Total tokens across all sessions">0 tokens</div>
         <div class="header-font-controls">
           <button class="btn-icon-header btn-sm" onclick="app.decreaseFontSize()" title="Decrease font (Ctrl+-)">A-</button>
           <span class="font-size-display" id="fontSizeDisplay">14</span>
           <button class="btn-icon-header btn-sm" onclick="app.increaseFontSize()" title="Increase font (Ctrl++)">A+</button>
         </div>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting</span>
+        </div>
+        <div class="header-tokens" id="headerTokens" title="Total tokens across all sessions">0 tokens</div>
         <button class="btn-icon-header" onclick="app.openAppSettings()" title="App Settings">&#x2699;</button>
       </div>
     </header>
@@ -73,7 +73,11 @@
           <button class="btn-toolbar btn-primary" onclick="app.runClaude()" title="Run Claude (Ctrl+Enter)">
             Run Claude
           </button>
-          <input type="number" id="tabCount" class="toolbar-input-sm" value="1" min="1" max="10" title="Number of tabs to open (1-10)">
+          <div class="tab-count-group" title="Number of tabs to open (1-10)">
+            <button class="tab-count-btn" onclick="app.decrementTabCount()">−</button>
+            <input type="number" id="tabCount" class="tab-count-input" value="1" min="1" max="10" readonly>
+            <button class="tab-count-btn" onclick="app.incrementTabCount()">+</button>
+          </div>
           <button class="btn-toolbar" onclick="app.runShell()" title="Run Shell">
             Shell
           </button>
@@ -101,78 +105,6 @@
         <button class="btn-toolbar btn-danger" onclick="app.killActiveSession()" title="Kill current session">Kill</button>
       </div>
     </footer>
-
-    <!-- Respawn Settings Panel (slide-up) -->
-    <div class="respawn-panel" id="respawnPanel">
-      <div class="respawn-panel-header">
-        <span>Respawn Settings</span>
-        <button class="btn-close" onclick="app.toggleRespawnPanel()">&times;</button>
-      </div>
-      <div class="respawn-panel-body">
-        <div class="form-row">
-          <label>Update Prompt</label>
-          <input type="text" id="respawnPrompt" value="update all the docs and CLAUDE.md" placeholder="Prompt to send when idle">
-        </div>
-        <div class="form-row-inline">
-          <div class="form-col">
-            <label>Idle Timeout</label>
-            <div class="input-suffix">
-              <input type="number" id="respawnIdleTimeout" value="5" min="1" max="60">
-              <span>sec</span>
-            </div>
-          </div>
-          <div class="form-col">
-            <label>Step Delay</label>
-            <div class="input-suffix">
-              <input type="number" id="respawnStepDelay" value="1" min="0" max="10">
-              <span>sec</span>
-            </div>
-          </div>
-        </div>
-        <div class="form-row">
-          <label>Run Duration (optional)</label>
-          <div class="input-suffix">
-            <input type="number" id="respawnDuration" value="" min="1" placeholder="No limit">
-            <span>min</span>
-          </div>
-          <span class="form-hint">Leave empty for unlimited. Respawn stops after duration.</span>
-        </div>
-        <div class="form-row">
-          <label>After Update Prompt:</label>
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="respawnSendClear" checked>
-              <span>Send /clear</span>
-              <span class="checkbox-hint">Clear conversation context</span>
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" id="respawnSendInit" checked>
-              <span>Send /init</span>
-              <span class="checkbox-hint">Reinitialize session</span>
-            </label>
-          </div>
-        </div>
-        <div class="form-row">
-          <label>Auto-Clear Context</label>
-          <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" id="autoClearEnabled">
-              <span>Enable Auto-Clear</span>
-              <span class="checkbox-hint">Clear at token threshold</span>
-            </label>
-          </div>
-          <div class="input-suffix" style="margin-top: 0.5rem;">
-            <input type="number" id="autoClearThreshold" value="100000" min="10000" max="500000" step="10000">
-            <span>tokens</span>
-          </div>
-        </div>
-        <div class="form-actions">
-          <button class="btn-toolbar" onclick="app.toggleRespawnPanel()">Cancel</button>
-          <button class="btn-toolbar btn-success" onclick="app.enableRespawnOnCurrent()" id="enableOnCurrentBtn" style="display: none;">Enable on Current</button>
-          <button class="btn-toolbar btn-primary" onclick="app.startInteractiveWithRespawn()">Start New + Respawn</button>
-        </div>
-      </div>
-    </div>
 
     <!-- Help Modal -->
     <div class="modal" id="helpModal">
@@ -228,10 +160,10 @@
       </div>
     </div>
 
-    <!-- Session Options Modal -->
+    <!-- Session Options Modal (includes Respawn Settings) -->
     <div class="modal" id="sessionOptionsModal">
       <div class="modal-backdrop" onclick="app.closeSessionOptions()"></div>
-      <div class="modal-content modal-sm">
+      <div class="modal-content">
         <div class="modal-header">
           <h3>Session Options</h3>
           <button class="modal-close" onclick="app.closeSessionOptions()">&times;</button>
@@ -245,20 +177,85 @@
             <label>Directory</label>
             <div class="session-dir-display" id="sessionDirDisplay">/path/to/dir</div>
           </div>
-          <div class="form-row session-respawn-section" id="sessionRespawnSection">
-            <label>Respawn Controller</label>
-            <div class="session-respawn-status" id="sessionRespawnStatus">
-              <span class="respawn-status-text">Not active</span>
+
+          <!-- Respawn Settings Section -->
+          <div class="session-respawn-section" id="sessionRespawnSection">
+            <div class="section-divider">
+              <span>Respawn Controller</span>
+              <div class="session-respawn-status" id="sessionRespawnStatus">
+                <span class="respawn-status-indicator"></span>
+                <span class="respawn-status-text">Not active</span>
+              </div>
             </div>
-            <div class="session-respawn-actions">
-              <button class="btn-toolbar btn-sm" onclick="app.toggleRespawnPanel(); app.closeSessionOptions();" id="sessionConfigRespawnBtn">Configure Respawn</button>
-              <button class="btn-toolbar btn-sm btn-danger" onclick="app.stopRespawnFromOptions()" id="sessionStopRespawnBtn" style="display: none;">Stop Respawn</button>
+
+            <div class="form-row">
+              <label>Update Prompt</label>
+              <input type="text" id="modalRespawnPrompt" value="update all the docs and CLAUDE.md" placeholder="Prompt to send when idle">
+            </div>
+
+            <div class="form-row-inline">
+              <div class="form-col">
+                <label>Idle Timeout</label>
+                <div class="input-suffix">
+                  <input type="number" id="modalRespawnIdleTimeout" value="5" min="1" max="60">
+                  <span>sec</span>
+                </div>
+              </div>
+              <div class="form-col">
+                <label>Step Delay</label>
+                <div class="input-suffix">
+                  <input type="number" id="modalRespawnStepDelay" value="1" min="0" max="10">
+                  <span>sec</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>Run Duration</label>
+              <div class="input-suffix">
+                <input type="number" id="modalRespawnDuration" value="" min="1" placeholder="No limit">
+                <span>min</span>
+              </div>
+              <span class="form-hint">Leave empty for unlimited. Respawn stops after duration.</span>
+            </div>
+
+            <div class="form-row">
+              <label>After Update Prompt</label>
+              <div class="checkbox-group-inline">
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="modalRespawnSendClear" checked>
+                  <span>Send /clear</span>
+                </label>
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="modalRespawnSendInit" checked>
+                  <span>Send /init</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>Auto-Clear Context</label>
+              <div class="auto-clear-row">
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="modalAutoClearEnabled">
+                  <span>Enable at</span>
+                </label>
+                <div class="input-suffix input-suffix-sm">
+                  <input type="number" id="modalAutoClearThreshold" value="100000" min="10000" max="500000" step="10000">
+                  <span>tokens</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="respawn-actions">
+              <button class="btn-toolbar btn-success" onclick="app.enableRespawnFromModal()" id="modalEnableRespawnBtn">Enable Respawn</button>
+              <button class="btn-toolbar btn-danger" onclick="app.stopRespawnFromModal()" id="modalStopRespawnBtn" style="display: none;">Stop Respawn</button>
             </div>
           </div>
         </div>
         <div class="form-actions">
           <button class="btn-toolbar" onclick="app.closeSessionOptions()">Cancel</button>
-          <button class="btn-toolbar btn-primary" onclick="app.saveSessionOptions()">Save</button>
+          <button class="btn-toolbar btn-primary" onclick="app.saveSessionOptions()">Save Name</button>
         </div>
       </div>
     </div>

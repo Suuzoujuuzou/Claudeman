@@ -386,6 +386,91 @@ npm run build
 npm run clean
 ```
 
+## Testing
+
+### Unit Tests
+
+```bash
+npm run test                              # Run all tests once
+npm run test:watch                        # Watch mode
+npm run test:coverage                     # With coverage report
+npx vitest run test/session.test.ts       # Single file
+npx vitest run -t "should create session" # By pattern
+```
+
+### E2E Testing with agent-browser
+
+The project uses [agent-browser](https://github.com/vercel-labs/agent-browser) for end-to-end testing of the web interface. This tool provides browser automation via accessibility tree snapshots and element references.
+
+#### Installation
+
+```bash
+npm install -g agent-browser
+```
+
+#### Running E2E Tests
+
+1. Start the web server:
+```bash
+npm run dev
+# or
+claudeman web
+```
+
+2. Kill any existing screen sessions (clean slate):
+```bash
+screen -ls | grep -oP '\d+\.\S+' | xargs -I{} screen -X -S {} quit 2>/dev/null || true
+```
+
+3. Run tests with agent-browser:
+```bash
+# Open the app and take initial snapshot
+npx agent-browser open http://localhost:3000
+npx agent-browser wait --load networkidle
+npx agent-browser snapshot
+npx agent-browser screenshot /tmp/claudeman-test-initial.png
+
+# Test font controls
+npx agent-browser find text "A-" click
+npx agent-browser find text "A+" click
+
+# Test tab count stepper
+npx agent-browser find text "+" click    # Increment
+npx agent-browser find text "−" click    # Decrement
+
+# Test session creation
+npx agent-browser find text "Run Claude" click
+npx agent-browser wait 2000
+npx agent-browser snapshot
+
+# Test Monitor panel
+npx agent-browser find text "Monitor" click
+npx agent-browser wait 500
+npx agent-browser snapshot
+
+# Cleanup
+npx agent-browser close
+```
+
+#### E2E Test Skill
+
+A skill is available at `.claude/skills/e2e-test.md` that documents the complete test plan with all test cases and expected results. Run it with Claude Code:
+
+```bash
+/e2e-test
+```
+
+#### Key Test Areas
+
+| Area | What to Test |
+|------|--------------|
+| Initial Load | Header, tabs, font controls, connection status |
+| Font Controls | A-/A+ buttons positioned left of connection |
+| Tab Count | Stepper with −/number/+ buttons |
+| Session Creation | Tab appears, terminal shows Claude starting |
+| Session Options | Modal with respawn settings |
+| Monitor Panel | Screen sessions and background tasks display |
+
 ## Requirements
 
 - Node.js 18+

@@ -118,7 +118,9 @@ export class WebServer extends EventEmitter {
       const session = new Session({
         workingDir,
         mode: body.mode || 'claude',
-        name: body.name || ''
+        name: body.name || '',
+        screenManager: this.screenManager,
+        useScreen: true
       });
 
       this.sessions.set(session.id, session);
@@ -256,6 +258,7 @@ export class WebServer extends EventEmitter {
       try {
         await session.startInteractive();
         this.broadcast('session:interactive', { id });
+        this.broadcast('session:updated', { session: session.toDetailedState() });
         return { success: true, message: 'Interactive session started' };
       } catch (err) {
         return { error: (err as Error).message };
@@ -278,6 +281,7 @@ export class WebServer extends EventEmitter {
       try {
         await session.startShell();
         this.broadcast('session:interactive', { id, mode: 'shell' });
+        this.broadcast('session:updated', { session: session.toDetailedState() });
         return { success: true, message: 'Shell session started' };
       } catch (err) {
         return { error: (err as Error).message };
@@ -419,6 +423,7 @@ export class WebServer extends EventEmitter {
         // Start interactive session
         await session.startInteractive();
         this.broadcast('session:interactive', { id });
+        this.broadcast('session:updated', { session: session.toDetailedState() });
 
         // Create and start respawn controller
         const controller = new RespawnController(session, body?.respawnConfig);
@@ -651,7 +656,11 @@ export class WebServer extends EventEmitter {
       }
 
       // Create a new session with the case as working directory
-      const session = new Session({ workingDir: casePath });
+      const session = new Session({
+        workingDir: casePath,
+        screenManager: this.screenManager,
+        useScreen: true
+      });
       this.sessions.set(session.id, session);
       this.setupSessionListeners(session);
       this.broadcast('session:created', session.toDetailedState());
@@ -660,6 +669,7 @@ export class WebServer extends EventEmitter {
       try {
         await session.startInteractive();
         this.broadcast('session:interactive', { id: session.id });
+        this.broadcast('session:updated', { session: session.toDetailedState() });
 
         return {
           success: true,
@@ -1053,7 +1063,9 @@ export class WebServer extends EventEmitter {
               id: screen.sessionId,  // Preserve the original session ID
               workingDir: screen.workingDir,
               mode: screen.mode,
-              name: `Restored: ${screen.screenName}`
+              name: `Restored: ${screen.screenName}`,
+              screenManager: this.screenManager,
+              useScreen: true
             });
 
             this.sessions.set(session.id, session);

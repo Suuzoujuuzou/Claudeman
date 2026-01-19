@@ -209,12 +209,13 @@ class ClaudemanApp {
 
     this.eventSource.addEventListener('session:updated', (e) => {
       const data = JSON.parse(e.data);
-      this.sessions.set(data.id, data);
+      const session = data.session || data;
+      this.sessions.set(session.id, session);
       this.renderSessionTabs();
       this.updateCost();
       // Update tokens display if this is the active session
-      if (data.id === this.activeSessionId && data.tokens) {
-        this.updateRespawnTokens(data.tokens.total);
+      if (session.id === this.activeSessionId && session.tokens) {
+        this.updateRespawnTokens(session.tokens.total);
       }
     });
 
@@ -423,7 +424,7 @@ class ClaudemanApp {
 
     this.eventSource.addEventListener('screen:statsUpdated', (e) => {
       this.screenSessions = JSON.parse(e.data);
-      if (document.getElementById('processPanel').classList.contains('open')) {
+      if (document.getElementById('monitorPanel').classList.contains('open')) {
         this.renderScreenSessions();
       }
     });
@@ -676,6 +677,19 @@ class ClaudemanApp {
     return this.runClaude();
   }
 
+  // Tab count stepper functions
+  incrementTabCount() {
+    const input = document.getElementById('tabCount');
+    const current = parseInt(input.value) || 1;
+    input.value = Math.min(10, current + 1);
+  }
+
+  decrementTabCount() {
+    const input = document.getElementById('tabCount');
+    const current = parseInt(input.value) || 1;
+    input.value = Math.max(1, current - 1);
+  }
+
   async runClaude() {
     const caseName = document.getElementById('quickStartCase').value || 'testcase';
     const tabCount = Math.min(10, Math.max(1, parseInt(document.getElementById('tabCount').value) || 1));
@@ -824,145 +838,7 @@ class ClaudemanApp {
     }, 100);
   }
 
-  // ========== Respawn Panel ==========
-
-  toggleRespawnPanel() {
-    const panel = document.getElementById('respawnPanel');
-    panel.classList.toggle('open');
-
-    // Show "Enable on Current" button if there's an active session
-    const enableOnCurrentBtn = document.getElementById('enableOnCurrentBtn');
-    if (this.activeSessionId && this.sessions.has(this.activeSessionId)) {
-      const session = this.sessions.get(this.activeSessionId);
-      // Only show if session is running (has a PID)
-      if (session.pid) {
-        enableOnCurrentBtn.style.display = '';
-      } else {
-        enableOnCurrentBtn.style.display = 'none';
-      }
-    } else {
-      enableOnCurrentBtn.style.display = 'none';
-    }
-  }
-
-  getRespawnConfig() {
-    const updatePrompt = document.getElementById('respawnPrompt').value;
-    const idleTimeout = parseInt(document.getElementById('respawnIdleTimeout').value) || 5;
-    const stepDelay = parseInt(document.getElementById('respawnStepDelay').value) || 1;
-    const sendClear = document.getElementById('respawnSendClear').checked;
-    const sendInit = document.getElementById('respawnSendInit').checked;
-    const durationStr = document.getElementById('respawnDuration').value;
-    const durationMinutes = durationStr ? parseInt(durationStr) : null;
-    const autoClearEnabled = document.getElementById('autoClearEnabled').checked;
-    const autoClearThreshold = parseInt(document.getElementById('autoClearThreshold').value) || 100000;
-
-    return {
-      respawnConfig: {
-        updatePrompt,
-        idleTimeoutMs: idleTimeout * 1000,
-        interStepDelayMs: stepDelay * 1000,
-        sendClear,
-        sendInit,
-      },
-      durationMinutes,
-      autoClearEnabled,
-      autoClearThreshold
-    };
-  }
-
-  async startInteractiveWithRespawn() {
-    this.toggleRespawnPanel();
-
-    const dir = document.getElementById('dirInput').value.trim();
-    const { respawnConfig, durationMinutes, autoClearEnabled, autoClearThreshold } = this.getRespawnConfig();
-
-    this.terminal.clear();
-    this.terminal.writeln('\x1b[1;32m Starting session with respawn...\x1b[0m');
-    if (durationMinutes) {
-      this.terminal.writeln(`\x1b[90m Duration: ${durationMinutes} minutes\x1b[0m`);
-    }
-    this.terminal.writeln('');
-
-    try {
-      // Create session
-      const createRes = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workingDir: dir || undefined })
-      });
-      const createData = await createRes.json();
-      if (!createData.success) throw new Error(createData.error);
-
-      const sessionId = createData.session.id;
-      this.activeSessionId = sessionId;
-
-      // Start interactive with respawn
-      await fetch(`/api/sessions/${sessionId}/interactive-respawn`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ respawnConfig, durationMinutes })
-      });
-
-      // Set auto-clear if enabled
-      if (autoClearEnabled) {
-        await fetch(`/api/sessions/${sessionId}/auto-clear`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: true, threshold: autoClearThreshold })
-        });
-      }
-
-      // Send resize
-      const dims = this.fitAddon.proposeDimensions();
-      if (dims) {
-        await fetch(`/api/sessions/${sessionId}/resize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
-        });
-      }
-
-      this.terminal.focus();
-    } catch (err) {
-      this.terminal.writeln(`\x1b[1;31m Error: ${err.message}\x1b[0m`);
-    }
-  }
-
-  async enableRespawnOnCurrent() {
-    if (!this.activeSessionId) {
-      this.showToast('No active session', 'warning');
-      return;
-    }
-
-    this.toggleRespawnPanel();
-
-    const { respawnConfig, durationMinutes, autoClearEnabled, autoClearThreshold } = this.getRespawnConfig();
-
-    try {
-      // Enable respawn on existing session
-      const res = await fetch(`/api/sessions/${this.activeSessionId}/respawn/enable`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: respawnConfig, durationMinutes })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-
-      // Set auto-clear if enabled
-      if (autoClearEnabled) {
-        await fetch(`/api/sessions/${this.activeSessionId}/auto-clear`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: true, threshold: autoClearThreshold })
-        });
-      }
-
-      this.showToast('Respawn enabled on current session', 'success');
-      this.terminal.focus();
-    } catch (err) {
-      this.showToast('Failed to enable respawn: ' + err.message, 'error');
-    }
-  }
+  // ========== Respawn Banner ==========
 
   showRespawnBanner() {
     document.getElementById('respawnBanner').style.display = 'flex';
@@ -1201,22 +1077,22 @@ class ClaudemanApp {
     document.getElementById('sessionNameInput').value = session.name || '';
     document.getElementById('sessionDirDisplay').textContent = session.workingDir || 'Unknown';
 
-    // Update respawn status display
+    // Update respawn status display and buttons
     const respawnStatus = document.getElementById('sessionRespawnStatus');
-    const stopBtn = document.getElementById('sessionStopRespawnBtn');
-    const configBtn = document.getElementById('sessionConfigRespawnBtn');
+    const enableBtn = document.getElementById('modalEnableRespawnBtn');
+    const stopBtn = document.getElementById('modalStopRespawnBtn');
 
     if (this.respawnStatus[sessionId]) {
       respawnStatus.classList.add('active');
       respawnStatus.querySelector('.respawn-status-text').textContent =
-        `Active (${this.respawnStatus[sessionId].state || 'running'})`;
+        this.respawnStatus[sessionId].state || 'Active';
+      enableBtn.style.display = 'none';
       stopBtn.style.display = '';
-      configBtn.textContent = 'Reconfigure';
     } else {
       respawnStatus.classList.remove('active');
       respawnStatus.querySelector('.respawn-status-text').textContent = 'Not active';
+      enableBtn.style.display = '';
       stopBtn.style.display = 'none';
-      configBtn.textContent = 'Configure Respawn';
     }
 
     // Only show respawn section for claude mode sessions with a running process
@@ -1233,7 +1109,73 @@ class ClaudemanApp {
     setTimeout(() => document.getElementById('sessionNameInput').focus(), 100);
   }
 
-  async stopRespawnFromOptions() {
+  // Get respawn config from modal inputs
+  getModalRespawnConfig() {
+    const updatePrompt = document.getElementById('modalRespawnPrompt').value;
+    const idleTimeout = parseInt(document.getElementById('modalRespawnIdleTimeout').value) || 5;
+    const stepDelay = parseInt(document.getElementById('modalRespawnStepDelay').value) || 1;
+    const sendClear = document.getElementById('modalRespawnSendClear').checked;
+    const sendInit = document.getElementById('modalRespawnSendInit').checked;
+    const durationStr = document.getElementById('modalRespawnDuration').value;
+    const durationMinutes = durationStr ? parseInt(durationStr) : null;
+    const autoClearEnabled = document.getElementById('modalAutoClearEnabled').checked;
+    const autoClearThreshold = parseInt(document.getElementById('modalAutoClearThreshold').value) || 100000;
+
+    return {
+      respawnConfig: {
+        updatePrompt,
+        idleTimeoutMs: idleTimeout * 1000,
+        interStepDelayMs: stepDelay * 1000,
+        sendClear,
+        sendInit,
+      },
+      durationMinutes,
+      autoClearEnabled,
+      autoClearThreshold
+    };
+  }
+
+  async enableRespawnFromModal() {
+    if (!this.editingSessionId) {
+      this.showToast('No session selected', 'warning');
+      return;
+    }
+
+    const { respawnConfig, durationMinutes, autoClearEnabled, autoClearThreshold } = this.getModalRespawnConfig();
+
+    try {
+      // Enable respawn on the session
+      const res = await fetch(`/api/sessions/${this.editingSessionId}/respawn/enable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: respawnConfig, durationMinutes })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      // Set auto-clear if enabled
+      if (autoClearEnabled) {
+        await fetch(`/api/sessions/${this.editingSessionId}/auto-clear`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true, threshold: autoClearThreshold })
+        });
+      }
+
+      // Update UI
+      const respawnStatus = document.getElementById('sessionRespawnStatus');
+      respawnStatus.classList.add('active');
+      respawnStatus.querySelector('.respawn-status-text').textContent = 'WATCHING';
+      document.getElementById('modalEnableRespawnBtn').style.display = 'none';
+      document.getElementById('modalStopRespawnBtn').style.display = '';
+
+      this.showToast('Respawn enabled', 'success');
+    } catch (err) {
+      this.showToast('Failed to enable respawn: ' + err.message, 'error');
+    }
+  }
+
+  async stopRespawnFromModal() {
     if (!this.editingSessionId) return;
     try {
       await fetch(`/api/sessions/${this.editingSessionId}/respawn/stop`, { method: 'POST' });
@@ -1243,8 +1185,8 @@ class ClaudemanApp {
       const respawnStatus = document.getElementById('sessionRespawnStatus');
       respawnStatus.classList.remove('active');
       respawnStatus.querySelector('.respawn-status-text').textContent = 'Not active';
-      document.getElementById('sessionStopRespawnBtn').style.display = 'none';
-      document.getElementById('sessionConfigRespawnBtn').textContent = 'Configure Respawn';
+      document.getElementById('modalEnableRespawnBtn').style.display = '';
+      document.getElementById('modalStopRespawnBtn').style.display = 'none';
 
       this.showToast('Respawn stopped', 'success');
     } catch (err) {
@@ -1412,7 +1354,6 @@ class ClaudemanApp {
     this.closeSessionOptions();
     this.closeAppSettings();
     this.cancelCloseSession();
-    document.getElementById('respawnPanel').classList.remove('open');
     document.getElementById('monitorPanel').classList.remove('open');
   }
 

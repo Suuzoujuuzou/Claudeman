@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import * as pty from 'node-pty';
-import { SessionState, SessionStatus, SessionConfig } from './types.js';
+import { execSync } from 'node:child_process';
+import { SessionState, SessionStatus, SessionConfig, ScreenSession } from './types.js';
 import { TaskTracker, type BackgroundTask } from './task-tracker.js';
+import { ScreenManager } from './screen-manager.js';
 
 export type { BackgroundTask } from './task-tracker.js';
 
@@ -89,7 +91,18 @@ export class Session extends EventEmitter {
   private _autoClearEnabled: boolean = false;
   private _isClearing: boolean = false; // Prevent recursive clearing
 
-  constructor(config: Partial<SessionConfig> & { workingDir: string; mode?: SessionMode; name?: string }) {
+  // Screen session support
+  private _screenManager: ScreenManager | null = null;
+  private _screenSession: ScreenSession | null = null;
+  private _useScreen: boolean = false;
+
+  constructor(config: Partial<SessionConfig> & {
+    workingDir: string;
+    mode?: SessionMode;
+    name?: string;
+    screenManager?: ScreenManager;
+    useScreen?: boolean;
+  }) {
     super();
     this.id = config.id || uuidv4();
     this.workingDir = config.workingDir;
@@ -97,6 +110,8 @@ export class Session extends EventEmitter {
     this.mode = config.mode || 'claude';
     this._name = config.name || '';
     this._lastActivityAt = this.createdAt;
+    this._screenManager = config.screenManager || null;
+    this._useScreen = config.useScreen ?? (this._screenManager !== null && ScreenManager.isScreenAvailable());
 
     // Initialize task tracker and forward events
     this._taskTracker = new TaskTracker();
@@ -286,17 +301,46 @@ export class Session extends EventEmitter {
     this._lineBuffer = '';
     this._lastActivityAt = Date.now();
 
-    console.log('[Session] Starting interactive Claude session');
+    console.log('[Session] Starting interactive Claude session' + (this._useScreen ? ' (with screen)' : ''));
 
-    this.ptyProcess = pty.spawn('claude', [
-      '--dangerously-skip-permissions'
-    ], {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 40,
-      cwd: this.workingDir,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    });
+    // If screen wrapping is enabled, create a screen session first
+    if (this._useScreen && this._screenManager) {
+      try {
+        this._screenSession = await this._screenManager.createScreen(this.id, this.workingDir, 'claude');
+        console.log('[Session] Created screen session:', this._screenSession.screenName);
+
+        // Wait a moment for screen to fully start
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Attach to the screen session via PTY
+        this.ptyProcess = pty.spawn('screen', [
+          '-x', this._screenSession.screenName
+        ], {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 40,
+          cwd: this.workingDir,
+          env: { ...process.env, TERM: 'xterm-256color' },
+        });
+      } catch (err) {
+        console.error('[Session] Failed to create screen session, falling back to direct PTY:', err);
+        this._useScreen = false;
+        this._screenSession = null;
+      }
+    }
+
+    // Fallback to direct PTY if screen is not used
+    if (!this.ptyProcess) {
+      this.ptyProcess = pty.spawn('claude', [
+        '--dangerously-skip-permissions'
+      ], {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd: this.workingDir,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    }
 
     this._pid = this.ptyProcess.pid;
     console.log('[Session] Interactive PTY spawned with PID:', this._pid);
@@ -350,6 +394,10 @@ export class Session extends EventEmitter {
       this.ptyProcess = null;
       this._pid = null;
       this._status = 'idle';
+      // If using screen, mark the screen as detached but don't kill it
+      if (this._screenSession && this._screenManager) {
+        this._screenManager.setAttached(this.id, false);
+      }
       this.emit('exit', exitCode);
     });
   }
@@ -371,15 +419,44 @@ export class Session extends EventEmitter {
 
     // Use user's default shell or bash
     const shell = process.env.SHELL || '/bin/bash';
-    console.log('[Session] Starting shell session with:', shell);
+    console.log('[Session] Starting shell session with:', shell + (this._useScreen ? ' (with screen)' : ''));
 
-    this.ptyProcess = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 40,
-      cwd: this.workingDir,
-      env: { ...process.env, TERM: 'xterm-256color' },
-    });
+    // If screen wrapping is enabled, create a screen session first
+    if (this._useScreen && this._screenManager) {
+      try {
+        this._screenSession = await this._screenManager.createScreen(this.id, this.workingDir, 'shell');
+        console.log('[Session] Created screen session:', this._screenSession.screenName);
+
+        // Wait a moment for screen to fully start
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Attach to the screen session via PTY
+        this.ptyProcess = pty.spawn('screen', [
+          '-x', this._screenSession.screenName
+        ], {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 40,
+          cwd: this.workingDir,
+          env: { ...process.env, TERM: 'xterm-256color' },
+        });
+      } catch (err) {
+        console.error('[Session] Failed to create screen session, falling back to direct PTY:', err);
+        this._useScreen = false;
+        this._screenSession = null;
+      }
+    }
+
+    // Fallback to direct PTY if screen is not used
+    if (!this.ptyProcess) {
+      this.ptyProcess = pty.spawn(shell, [], {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd: this.workingDir,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      });
+    }
 
     this._pid = this.ptyProcess.pid;
     console.log('[Session] Shell PTY spawned with PID:', this._pid);
@@ -406,6 +483,10 @@ export class Session extends EventEmitter {
       this.ptyProcess = null;
       this._pid = null;
       this._status = 'idle';
+      // If using screen, mark the screen as detached but don't kill it
+      if (this._screenSession && this._screenManager) {
+        this._screenManager.setAttached(this.id, false);
+      }
       this.emit('exit', exitCode);
     });
 
