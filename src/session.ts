@@ -16,6 +16,10 @@ const TEXT_OUTPUT_TRIM_SIZE = 1.5 * 1024 * 1024;
 // Maximum number of Claude messages to keep in memory
 const MAX_MESSAGES = 1000;
 
+// Filter out terminal focus escape sequences (focus in/out reports)
+// ^[[I (focus in), ^[[O (focus out), and the enable/disable sequences
+const FOCUS_ESCAPE_FILTER = /\x1b\[\?1004[hl]|\x1b\[[IO]/g;
+
 export interface ClaudeMessage {
   type: 'system' | 'assistant' | 'user' | 'result';
   subtype?: string;
@@ -297,7 +301,11 @@ export class Session extends EventEmitter {
     this._pid = this.ptyProcess.pid;
     console.log('[Session] Interactive PTY spawned with PID:', this._pid);
 
-    this.ptyProcess.onData((data: string) => {
+    this.ptyProcess.onData((rawData: string) => {
+      // Filter out focus escape sequences
+      const data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
+      if (!data) return; // Skip if only focus sequences
+
       this._terminalBuffer += data;
       this._lastActivityAt = Date.now();
 
@@ -376,7 +384,11 @@ export class Session extends EventEmitter {
     this._pid = this.ptyProcess.pid;
     console.log('[Session] Shell PTY spawned with PID:', this._pid);
 
-    this.ptyProcess.onData((data: string) => {
+    this.ptyProcess.onData((rawData: string) => {
+      // Filter out focus escape sequences
+      const data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
+      if (!data) return; // Skip if only focus sequences
+
       this._terminalBuffer += data;
       this._lastActivityAt = Date.now();
 
@@ -444,7 +456,11 @@ export class Session extends EventEmitter {
         console.log('[Session] PTY spawned with PID:', this._pid);
 
         // Handle terminal data
-        this.ptyProcess.onData((data: string) => {
+        this.ptyProcess.onData((rawData: string) => {
+          // Filter out focus escape sequences
+          const data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
+          if (!data) return; // Skip if only focus sequences
+
           this._terminalBuffer += data;
           this._lastActivityAt = Date.now();
 
