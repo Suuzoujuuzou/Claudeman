@@ -7,6 +7,9 @@ import { ScreenSession, ProcessStats, ScreenSessionWithStats } from './types.js'
 
 const SCREENS_FILE = join(homedir(), '.claudeman', 'screens.json');
 
+// Pre-compiled regex for screen list parsing
+const SCREEN_PATTERN = /(\d+)\.(claudeman-([a-f0-9-]+))/g;
+
 export class ScreenManager extends EventEmitter {
   private screens: Map<string, ScreenSession> = new Map();
   private statsInterval: NodeJS.Timeout | null = null;
@@ -257,9 +260,10 @@ export class ScreenManager extends EventEmitter {
         timeout: 5000
       });
       // Match: "12345.claudeman-abc12345   (Detached)" or similar
-      const screenPattern = /(\d+)\.(claudeman-([a-f0-9-]+))/g;
+      // Reset lastIndex since we're reusing the global regex
+      SCREEN_PATTERN.lastIndex = 0;
       let match;
-      while ((match = screenPattern.exec(output)) !== null) {
+      while ((match = SCREEN_PATTERN.exec(output)) !== null) {
         const pid = parseInt(match[1], 10);
         const screenName = match[2];
         const sessionIdFragment = match[3];
@@ -341,18 +345,71 @@ export class ScreenManager extends EventEmitter {
     }
   }
 
-  // Get all screens with stats (parallel for better performance)
+  // Get all screens with stats (batched for better performance)
   async getScreensWithStats(): Promise<ScreenSessionWithStats[]> {
     const screens = Array.from(this.screens.values());
+    if (screens.length === 0) {
+      return [];
+    }
 
-    // Fetch all stats in parallel
-    const statsPromises = screens.map(screen => this.getProcessStats(screen.sessionId));
-    const allStats = await Promise.all(statsPromises);
+    // Batch all PIDs into a single ps call for better performance
+    const pids = screens.map(s => s.pid);
+    const statsMap = new Map<number, ProcessStats>();
+
+    try {
+      // Single ps call for all PIDs
+      const psOutput = execSync(
+        `ps -o pid=,rss=,pcpu= -p ${pids.join(',')} 2>/dev/null || true`,
+        { encoding: 'utf-8', timeout: 5000 }
+      ).trim();
+
+      // Parse output - each line: "PID RSS CPU"
+      for (const line of psOutput.split('\n')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 3) {
+          const pid = parseInt(parts[0], 10);
+          const rss = parseFloat(parts[1]) || 0;
+          const cpu = parseFloat(parts[2]) || 0;
+          if (!isNaN(pid)) {
+            statsMap.set(pid, {
+              memoryMB: Math.round(rss / 1024 * 10) / 10,
+              cpuPercent: Math.round(cpu * 10) / 10,
+              childCount: 0,
+              updatedAt: Date.now()
+            });
+          }
+        }
+      }
+
+      // Batch child count query - single pgrep call
+      const pgrepOutput = execSync(
+        `for p in ${pids.join(' ')}; do echo "$p $(pgrep -P $p 2>/dev/null | wc -l)"; done`,
+        { encoding: 'utf-8', timeout: 5000 }
+      ).trim();
+
+      for (const line of pgrepOutput.split('\n')) {
+        const [pidStr, countStr] = line.trim().split(/\s+/);
+        const pid = parseInt(pidStr, 10);
+        const count = parseInt(countStr, 10) || 0;
+        const stats = statsMap.get(pid);
+        if (stats) {
+          stats.childCount = count;
+        }
+      }
+    } catch {
+      // Fall back to individual queries if batch fails
+      const statsPromises = screens.map(screen => this.getProcessStats(screen.sessionId));
+      const allStats = await Promise.all(statsPromises);
+      return screens.map((screen, i) => ({
+        ...screen,
+        stats: allStats[i] || undefined
+      }));
+    }
 
     // Combine screens with their stats
-    return screens.map((screen, i) => ({
+    return screens.map(screen => ({
       ...screen,
-      stats: allStats[i] || undefined
+      stats: statsMap.get(screen.pid) || undefined
     }));
   }
 

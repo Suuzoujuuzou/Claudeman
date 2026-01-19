@@ -6,6 +6,10 @@ const MAX_RESPAWN_BUFFER_SIZE = 1024 * 1024;
 // Keep this much when trimming (512KB)
 const RESPAWN_BUFFER_TRIM_SIZE = 512 * 1024;
 
+// Pre-compiled patterns for performance
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[HJKmsu?lh]/g;
+const WHITESPACE_PATTERN = /\s+/g;
+
 /**
  * Respawn sequence states
  *
@@ -194,9 +198,10 @@ export class RespawnController extends EventEmitter {
 
     // Filter out noise - only count meaningful data as activity
     // Ignore: cursor movements, color codes alone, small whitespace-only data
+    // Uses pre-compiled patterns for performance
     const meaningfulData = data
-      .replace(/\x1b\[[0-9;]*[HJKmsu?lh]/g, '') // Remove ANSI escape sequences
-      .replace(/\s+/g, '')                       // Remove whitespace
+      .replace(ANSI_ESCAPE_PATTERN, '') // Remove ANSI escape sequences
+      .replace(WHITESPACE_PATTERN, '')  // Remove whitespace
       .trim();
 
     const isMeaningfulActivity = meaningfulData.length > 0;
