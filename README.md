@@ -252,7 +252,6 @@ WATCHING → SENDING_UPDATE → WAITING_UPDATE → SENDING_CLEAR → WAITING_CLE
 |--------|---------|-------------|
 | `idleTimeoutMs` | 5000 | Time to wait after idle before sending update |
 | `updatePrompt` | "update all docs..." | Prompt to send when idle |
-| `interStepDelayMs` | 1000 | Delay between respawn steps |
 | `sendClear` | true | Send /clear after update prompt |
 | `sendInit` | true | Send /init after /clear |
 

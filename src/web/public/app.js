@@ -1265,7 +1265,6 @@ class ClaudemanApp {
   getModalRespawnConfig() {
     const updatePrompt = document.getElementById('modalRespawnPrompt').value;
     const idleTimeout = parseInt(document.getElementById('modalRespawnIdleTimeout').value) || 5;
-    const stepDelay = parseInt(document.getElementById('modalRespawnStepDelay').value) || 1;
     const sendClear = document.getElementById('modalRespawnSendClear').checked;
     const sendInit = document.getElementById('modalRespawnSendInit').checked;
     const durationStr = document.getElementById('modalRespawnDuration').value;
@@ -1277,7 +1276,6 @@ class ClaudemanApp {
       respawnConfig: {
         updatePrompt,
         idleTimeoutMs: idleTimeout * 1000,
-        interStepDelayMs: stepDelay * 1000,
         sendClear,
         sendInit,
       },
