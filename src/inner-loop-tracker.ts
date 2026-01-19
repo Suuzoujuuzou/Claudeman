@@ -43,7 +43,8 @@ const MAX_ITERATIONS_PATTERN = /max[_-]?iterations?\s*[=:]\s*(\d+)/i;
 const TODOWRITE_PATTERN = /TodoWrite|todo(?:s)?\s*(?:updated|written|saved)|Todos have been modified/i;
 
 // ANSI escape code removal for cleaner parsing
-const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
+// Matches color codes (\x1b[...m), cursor movement (\x1b[...H, \x1b[...C, etc.), and other sequences
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 export interface InnerLoopTrackerEvents {
   loopUpdate: (state: InnerLoopState) => void;
