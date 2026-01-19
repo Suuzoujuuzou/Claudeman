@@ -587,14 +587,25 @@ class ClaudemanApp {
         this.terminal.write(cleanBuffer);
       }
 
-      // Send resize
+      // Send resize and trigger redraw
       const dims = this.fitAddon.proposeDimensions();
       if (dims) {
-        fetch(`/api/sessions/${sessionId}/resize`, {
+        await fetch(`/api/sessions/${sessionId}/resize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
         });
+
+        // Send Ctrl+L to trigger Claude CLI to redraw at the new size
+        // This fixes the "squished" display when switching between tabs
+        const session = this.sessions.get(sessionId);
+        if (session && session.mode !== 'shell') {
+          await fetch(`/api/sessions/${sessionId}/input`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: '\x0c' }) // Ctrl+L
+          });
+        }
       }
 
       // Update respawn banner
