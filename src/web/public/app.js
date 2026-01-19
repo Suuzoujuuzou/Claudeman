@@ -562,32 +562,13 @@ class ClaudemanApp {
       const res = await fetch(`/api/sessions/${sessionId}/terminal`);
       const data = await res.json();
 
-      // Aggressively clear the terminal before switching sessions
-      // This ensures no residual content from previous display
       this.terminal.clear();
       this.terminal.reset();
-
       if (data.terminalBuffer) {
-        // Strip leading ANSI escape sequences and whitespace to prevent gaps
-        // This handles:
-        // - CSI sequences: ESC [ (params) (final) - includes ? for private modes
-        // - OSC sequences: ESC ] ... BEL or ESC \
-        // - Simple sequences: ESC followed by single char
-        // - Whitespace, CR, LF
-        // - Screen initialization sequences
-        let cleanBuffer = data.terminalBuffer;
-
-        // First, strip any leading screen/terminal initialization artifacts
-        // Including cursor positioning that could leave blank space
-        cleanBuffer = cleanBuffer.replace(/^(\x1b\[[0-9;?]*[A-Za-z@`]|\x1b\][^\x07]*\x07|\x1b[()][AB012]|\x1b[=>DEMNOP78c]|\x1b[^\x1b]|\s|\r|\n)*/g, '');
-
-        // Also strip any DCS sequences (screen might send these)
-        cleanBuffer = cleanBuffer.replace(/^\x1bP[^\x1b]*\x1b\\/g, '');
-
-        this.terminal.write(cleanBuffer);
+        this.terminal.write(data.terminalBuffer);
       }
 
-      // Send resize and trigger redraw
+      // Send resize and Ctrl+L to trigger Claude to redraw at correct size
       const dims = this.fitAddon.proposeDimensions();
       if (dims) {
         await fetch(`/api/sessions/${sessionId}/resize`, {
@@ -595,15 +576,13 @@ class ClaudemanApp {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
         });
-
-        // Send Ctrl+L to trigger Claude CLI to redraw at the new size
-        // This fixes the "squished" display when switching between tabs
+        // Send Ctrl+L to fix squished display after tab switch
         const session = this.sessions.get(sessionId);
         if (session && session.mode !== 'shell') {
-          await fetch(`/api/sessions/${sessionId}/input`, {
+          fetch(`/api/sessions/${sessionId}/input`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ input: '\x0c' }) // Ctrl+L
+            body: JSON.stringify({ input: '\x0c' })
           });
         }
       }
