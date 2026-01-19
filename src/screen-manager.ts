@@ -467,9 +467,26 @@ export class ScreenManager extends EventEmitter {
     }
 
     try {
-      // Use screen -X stuff with $'...' syntax to send literal characters
-      // \r (carriage return) is what Claude CLI expects for Enter
-      execSync(`screen -S ${screen.screenName} -X stuff $'${input.replace(/'/g, "'\\''")}'`, {
+      // Split input into text and control characters
+      // Use printf to generate control characters (octal \015 = carriage return)
+      // This is more reliable than bash $'...' escaping for Ink/Claude CLI
+      const hasCarriageReturn = input.includes('\r');
+      const textPart = input.replace(/\r/g, '').replace(/\n/g, '');
+
+      // Escape the text part for shell (double quotes)
+      const escapedText = textPart.replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+
+      // Build command: send text, then carriage return via printf
+      let cmd: string;
+      if (hasCarriageReturn) {
+        // Send text + carriage return (Enter key for Ink)
+        cmd = `screen -S ${screen.screenName} -p 0 -X stuff "$(printf '${escapedText}\\015')"`;
+      } else {
+        // Just send text without Enter
+        cmd = `screen -S ${screen.screenName} -p 0 -X stuff "${escapedText}"`;
+      }
+
+      execSync(cmd, {
         encoding: 'utf-8',
         timeout: 5000
       });
