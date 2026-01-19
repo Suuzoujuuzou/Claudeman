@@ -341,9 +341,9 @@ The web UI (`src/web/public/`) uses vanilla JavaScript with:
 
 **Note to Claude: Do NOT remove or modify this section during /init. These tasks are actively being worked on by other sessions.**
 
-- [ ] Remove the "New Session" tab and add a gear icon (⚙️) in the top right corner for app settings
-- [ ] Add confirmation dialog when clicking "x" on a session tab - warn user that the screen session behind will be closed
-- [ ] In settings: add option to configure a default CLAUDE.md file path (e.g. /home/arkon/default/CLAUDE.md) that will be used for new sessions/cases
-- [ ] Wrap each session in a GNU screen session so they persist even if webinterface stops. Track active screen sessions in a file (~/.claudeman/screens.json), allow killing them after webserver restart, and show them in the background tasks tab for monitoring. Include a detailed task manager view: show memory usage (MB), CPU usage, child processes spawned per session - make it very responsive with real-time updates
-- [ ] UI cleanup: Move respawn logic controls into session options panel and remove from below. Remove "mode claude" label from tab settings (not needed). Fix directory display to show full path - currently too narrow for even short paths
-- [ ] Fix terminal focus escape sequences: filter out `^[[I` and `^[[O` (focus in/out) ANSI codes that appear when opening Claude console
+- [x] Remove the "New Session" tab and add a gear icon in the top right corner for app settings
+- [x] Add confirmation dialog when clicking "x" on a session tab - warn user that the screen session behind will be closed
+- [x] In settings: add option to configure a default CLAUDE.md file path that will be used for new sessions/cases
+- [x] Wrap each session in a GNU screen session - track in ~/.claudeman/screens.json with Process Monitor panel showing memory, CPU, children
+- [x] UI cleanup: Move respawn controls to session options, remove mode label, fix directory display width
+- [x] Fix terminal focus escape sequences: filter out ^[[I and ^[[O (focus in/out) ANSI codes
