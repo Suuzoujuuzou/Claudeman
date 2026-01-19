@@ -3,6 +3,18 @@ import { EventEmitter } from 'node:events';
 // Maximum number of completed tasks to keep in memory
 const MAX_COMPLETED_TASKS = 100;
 
+// Pre-compiled patterns for performance
+const LAUNCH_PATTERNS = [
+  /Launching\s+(\w+)\s+agent/i,
+  /Starting\s+(\w+)\s+task/i,
+  /Spawning\s+(\w+)\s+agent/i,
+];
+const COMPLETE_PATTERNS = [
+  /Task\s+completed/i,
+  /Agent\s+finished/i,
+  /Background\s+task\s+done/i,
+];
+
 /**
  * Represents a background task spawned by Claude Code
  */
@@ -59,25 +71,25 @@ export class TaskTracker extends EventEmitter {
   /**
    * Process raw terminal output to detect task patterns
    * This is a fallback for when JSON parsing doesn't capture everything
+   * Uses pre-compiled patterns for performance
    */
   processTerminalOutput(data: string): void {
     // Detect task launch patterns in terminal output
     // Claude Code shows things like "Launching explore agent..." or similar
-    const launchPatterns = [
-      /Launching\s+(\w+)\s+agent/i,
-      /Starting\s+(\w+)\s+task/i,
-      /Spawning\s+(\w+)\s+agent/i,
-    ];
-
-    for (const pattern of launchPatterns) {
+    for (const pattern of LAUNCH_PATTERNS) {
       const match = data.match(pattern);
       if (match) {
         // This is a heuristic detection - might create duplicate tasks
         // but we dedupe by checking if we already have a running task of this type
         const agentType = match[1].toLowerCase();
-        const existingRunning = Array.from(this.tasks.values()).find(
-          t => t.subagentType === agentType && t.status === 'running'
-        );
+        // Optimize: use iterator directly instead of Array.from
+        let existingRunning = false;
+        for (const task of this.tasks.values()) {
+          if (task.subagentType === agentType && task.status === 'running') {
+            existingRunning = true;
+            break;
+          }
+        }
         if (!existingRunning) {
           this.createTaskFromTerminal(agentType, data);
         }
@@ -85,13 +97,7 @@ export class TaskTracker extends EventEmitter {
     }
 
     // Detect task completion patterns
-    const completePatterns = [
-      /Task\s+completed/i,
-      /Agent\s+finished/i,
-      /Background\s+task\s+done/i,
-    ];
-
-    for (const pattern of completePatterns) {
+    for (const pattern of COMPLETE_PATTERNS) {
       if (pattern.test(data)) {
         // Complete the most recent running task
         const runningTask = this.getMostRecentRunningTask();
