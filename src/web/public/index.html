@@ -189,9 +189,10 @@
           <button class="modal-close" onclick="app.closeSessionOptions()">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="form-row">
-            <label>Session Name</label>
-            <input type="text" id="sessionNameInput" placeholder="Enter session name...">
+          <div class="form-row-inline">
+            <input type="text" id="sessionNameInput" placeholder="Session name...">
+            <button class="btn-toolbar" onclick="app.closeSessionOptions()">Cancel</button>
+            <button class="btn-toolbar btn-primary" onclick="app.saveSessionOptions()">Save</button>
           </div>
 
           <!-- Respawn Settings Section -->
@@ -285,10 +286,6 @@
               <button class="btn-toolbar btn-danger" onclick="app.stopRespawnFromModal()" id="modalStopRespawnBtn" style="display: none;">Stop Respawn</button>
             </div>
           </div>
-        </div>
-        <div class="form-actions">
-          <button class="btn-toolbar" onclick="app.closeSessionOptions()">Cancel</button>
-          <button class="btn-toolbar btn-primary" onclick="app.saveSessionOptions()">Save Name</button>
         </div>
       </div>
     </div>
