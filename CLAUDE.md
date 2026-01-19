@@ -31,7 +31,10 @@ npm run test:watch                        # Watch mode
 npm run test:coverage                     # With coverage report
 npx vitest run test/session.test.ts       # Single file
 npx vitest run -t "should create session" # By pattern
-# Tests use different ports (3101-3108) to avoid conflicts
+# Tests use ports 3101-3108 to avoid conflicts with dev server (3000)
+
+# TypeScript checking (no linter configured)
+npx tsc --noEmit                          # Type check without building
 
 # Debugging
 screen -ls                                # List GNU screen sessions
@@ -287,6 +290,24 @@ npx agent-browser close
 ```
 
 Full test plan available at `.claude/skills/e2e-test.md`.
+
+## API Routes Quick Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/events` | SSE stream for real-time updates |
+| GET | `/api/status` | Full application state |
+| GET/POST/DELETE | `/api/sessions` | List/create/kill-all sessions |
+| GET/DELETE | `/api/sessions/:id` | Get/delete specific session |
+| POST | `/api/sessions/:id/input` | Send input to session PTY |
+| POST | `/api/sessions/:id/resize` | Resize terminal (cols, rows) |
+| POST | `/api/sessions/:id/interactive` | Start interactive mode |
+| POST | `/api/sessions/:id/respawn/start` | Start respawn controller |
+| POST | `/api/sessions/:id/respawn/stop` | Stop respawn controller |
+| POST | `/api/quick-start` | Create case + start interactive session |
+| GET | `/api/cases` | List available cases |
+| POST | `/api/cases` | Create new case |
+| GET | `/api/screens` | List screen sessions with stats |
 
 ## Notes
 
