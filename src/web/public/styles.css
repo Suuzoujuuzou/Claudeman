@@ -503,6 +503,16 @@ body {
   transition: stroke-dashoffset 0.5s ease-out;
 }
 
+.ralph-ring-progress-mini {
+  fill: none;
+  stroke: url(#ralphGradientMini);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset 0.5s ease-out;
+}
+
 .ralph-ring-text {
   position: absolute;
   top: 50%;
@@ -640,21 +650,27 @@ body {
 
 .ralph-meta-compact .ralph-meta-item {
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .ralph-meta-compact .ralph-meta-label {
   font-size: 0.6rem;
+  white-space: nowrap;
 }
 
 .ralph-meta-compact code {
-  font-size: 0.7rem;
-  padding: 0.15rem 0.4rem;
+  font-size: 0.55rem;
+  padding: 0.1rem 0.3rem;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ralph-meta-compact span:not(.ralph-meta-label) {
-  font-size: 0.8rem;
+  font-size: 0.6rem;
 }
 
 /* Compact Tasks Section */

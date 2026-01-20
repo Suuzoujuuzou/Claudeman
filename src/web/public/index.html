@@ -79,8 +79,14 @@
         <div class="ralph-summary-content" onclick="app.toggleInnerStatePanel()">
           <div class="ralph-ring-mini" id="ralphRingMini">
             <svg viewBox="0 0 36 36" class="ralph-ring-svg">
+              <defs>
+                <linearGradient id="ralphGradientMini" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6" />
+                  <stop offset="100%" stop-color="#22c55e" />
+                </linearGradient>
+              </defs>
               <circle class="ralph-ring-bg" cx="18" cy="18" r="15.9" />
-              <circle class="ralph-ring-progress" cx="18" cy="18" r="15.9" id="ralphRingMiniProgress" />
+              <circle class="ralph-ring-progress-mini" cx="18" cy="18" r="15.9" id="ralphRingMiniProgress" />
             </svg>
             <span class="ralph-ring-text" id="ralphRingMiniText">0%</span>
           </div>
