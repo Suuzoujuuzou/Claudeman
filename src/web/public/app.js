@@ -509,16 +509,11 @@ class ClaudemanApp {
       // Clear after 30 seconds to allow re-notification if loop restarts
       setTimeout(() => this._shownCompletions?.delete(completionKey), 30000);
 
-      this.showToast(`Loop completed: ${data.phrase}`, 'success');
       // Update inner state to mark loop as inactive
       const existing = this.innerStates.get(data.sessionId) || {};
       if (existing.loop) {
         existing.loop.active = false;
         this.updateInnerState(data.sessionId, existing);
-      }
-      // Show celebration animation if this is the active session
-      if (data.sessionId === this.activeSessionId) {
-        this.showRalphCelebration(data.phrase);
       }
     });
   }
@@ -2291,23 +2286,6 @@ class ClaudemanApp {
       case 'pending':
       default: return '○';
     }
-  }
-
-  showRalphCelebration(phrase) {
-    const celebration = this.$('ralphCelebration');
-    const text = this.$('ralphCelebrationText');
-    if (!celebration) return;
-
-    if (text) {
-      text.textContent = phrase ? `${phrase}` : 'Complete!';
-    }
-
-    celebration.classList.add('show');
-
-    // Auto-hide after 3 seconds
-    setTimeout(() => {
-      celebration.classList.remove('show');
-    }, 3000);
   }
 
   // Legacy method for backwards compatibility
