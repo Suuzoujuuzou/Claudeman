@@ -677,14 +677,15 @@ body {
 }
 
 .ralph-info-unified code {
-  font-size: 0.6rem;
-  padding: 0.15rem 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0;
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: var(--bg-card);
-  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
 }
 
 .ralph-info-unified span:not(.ralph-info-label) {
