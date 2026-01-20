@@ -129,22 +129,21 @@
               <div class="ralph-ring-label">Complete</div>
             </div>
           </div>
-          <!-- Meta Info -->
-          <div class="ralph-meta-compact">
-            <div class="ralph-meta-item">
-              <span class="ralph-meta-label">Waiting for</span>
-              <code id="ralphPhrase">--</code>
-            </div>
-            <div class="ralph-meta-item">
-              <span class="ralph-meta-label">Elapsed</span>
-              <span id="ralphElapsed">0m</span>
-            </div>
-          </div>
-          <!-- Task Cards - inline -->
-          <div class="ralph-tasks-compact">
-            <div class="ralph-tasks-header">
-              <span>Tasks</span>
-              <span class="ralph-tasks-count" id="ralphTasksCount">0/0</span>
+          <!-- Meta Info + Tasks unified -->
+          <div class="ralph-info-unified">
+            <div class="ralph-info-labels">
+              <div class="ralph-info-row">
+                <span class="ralph-info-label">Waiting for</span>
+                <code id="ralphPhrase">--</code>
+              </div>
+              <div class="ralph-info-row">
+                <span class="ralph-info-label">Elapsed</span>
+                <span id="ralphElapsed">0m</span>
+              </div>
+              <div class="ralph-info-row">
+                <span class="ralph-info-label">Tasks</span>
+                <span class="ralph-tasks-count" id="ralphTasksCount">0/0</span>
+              </div>
             </div>
             <div class="ralph-tasks-grid" id="ralphTasksGrid"></div>
           </div>
