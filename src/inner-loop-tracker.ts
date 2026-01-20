@@ -23,6 +23,17 @@ const TODO_CHECKBOX_PATTERN = /^[-*]\s*\[([xX ])\]\s+(.+)$/gm;
 const TODO_INDICATOR_PATTERN = /Todo:\s*(☐|◐|✓|⏳|✅|⌛|🔄)\s+(.+)/g;
 // Format 3: Status in parentheses: "(pending)", "(in_progress)", "(completed)"
 const TODO_STATUS_PATTERN = /[-*]\s*(.+?)\s+\((pending|in_progress|completed)\)/g;
+// Format 4: Claude Code native TodoWrite output: "☐ Task", "☒ Task", "◐ Task"
+// These appear in terminal with optional leading whitespace/brackets like "⎿  ☐ Task"
+// Matches: start of line with optional whitespace/bracket, then checkbox, then task text
+const TODO_NATIVE_PATTERN = /^[\s⎿]*(☐|☒|◐)\s+([^☐☒◐\n]{3,})/gm;
+
+// Patterns to exclude from todo detection (tool invocations, etc.)
+const TODO_EXCLUDE_PATTERNS = [
+  /^(?:Bash|Search|Read|Write|Glob|Grep|Edit|Task)\s*\(/i,  // Tool invocations
+  /^(?:I'll |Let me |Now I|First,|Task \d+:|Result:|Error:)/i,  // Claude commentary (with context)
+  /^\S+\([^)]+\)$/,                                          // Generic function call pattern
+];
 
 // Loop status patterns
 const LOOP_START_PATTERN = /Loop started at|Starting.*loop|Ralph loop started|<promise>([^<]+)<\/promise>/i;
@@ -33,7 +44,8 @@ const CYCLE_PATTERN = /cycle\s*#?(\d+)|respawn cycle #(\d+)/i;
 // Iteration patterns: "Iteration 5/50", "[5/50]", "iteration #5"
 const ITERATION_PATTERN = /(?:iteration|iter\.?)\s*#?(\d+)(?:\s*[\/of]\s*(\d+))?|\[(\d+)\/(\d+)\]/i;
 
-// Ralph loop start: "/ralph-loop" command or "Starting Ralph loop"
+// Ralph loop start: "/ralph-loop:ralph-loop" command or "Starting Ralph loop"
+// Pattern matches /ralph-loop anywhere to catch both skill invocations and output
 const RALPH_START_PATTERN = /\/ralph-loop|starting ralph(?:\s+wiggum)?\s+loop|ralph loop (?:started|beginning)/i;
 
 // Max iterations: "max-iterations 50" or "maxIterations: 50" or "max_iterations=50"
@@ -59,12 +71,14 @@ export interface InnerLoopTrackerEvents {
  * 2. Todo list items from the TodoWrite tool
  *
  * The tracker is DISABLED by default and auto-enables when Ralph-related
- * patterns are detected (e.g., /ralph-loop, <promise>, todos).
+ * patterns are detected (e.g., /ralph-loop:ralph-loop, <promise>, todos).
  */
 export class InnerLoopTracker extends EventEmitter {
   private _loopState: InnerLoopState;
   private _todos: Map<string, InnerTodoItem> = new Map();
   private _lineBuffer: string = '';
+  // Track occurrences of completion phrases to distinguish prompt from actual completion
+  private _completionPhraseCount: Map<string, number> = new Map();
 
   constructor() {
     super();
@@ -148,7 +162,7 @@ export class InnerLoopTracker extends EventEmitter {
    * Check if the data contains patterns that should auto-enable the tracker
    */
   private shouldAutoEnable(data: string): boolean {
-    // Ralph loop command: /ralph-loop
+    // Ralph loop command: /ralph-loop:ralph-loop
     if (RALPH_START_PATTERN.test(data)) {
       return true;
     }
@@ -178,6 +192,12 @@ export class InnerLoopTracker extends EventEmitter {
     // Todo indicator icons: "Todo: ☐", "Todo: ◐", etc.
     if (TODO_INDICATOR_PATTERN.test(data)) {
       TODO_INDICATOR_PATTERN.lastIndex = 0;
+      return true;
+    }
+
+    // Claude Code native todo format: "☐ Task", "☒ Task"
+    if (TODO_NATIVE_PATTERN.test(data)) {
+      TODO_NATIVE_PATTERN.lastIndex = 0;
       return true;
     }
 
@@ -229,34 +249,37 @@ export class InnerLoopTracker extends EventEmitter {
 
   /**
    * Handle a detected completion phrase
+   *
+   * Uses occurrence-based detection to distinguish prompt from actual completion:
+   * - 1st occurrence: Store as expected phrase (likely in prompt)
+   * - 2nd occurrence: Emit completionDetected (actual completion)
+   * - If loop already active: Emit immediately (explicit loop start)
    */
   private handleCompletionPhrase(phrase: string): void {
-    // Only mark as completed if the loop was actually active
-    // This prevents false positives when the completion phrase appears in the prompt itself
-    if (!this._loopState.active) {
-      // Just record the expected completion phrase without marking as complete
-      if (!this._loopState.completionPhrase) {
-        this._loopState.completionPhrase = phrase;
-        this._loopState.lastActivity = Date.now();
-        this.emit('loopUpdate', this.loopState);
-      }
-      return;
+    const count = (this._completionPhraseCount.get(phrase) || 0) + 1;
+    this._completionPhraseCount.set(phrase, count);
+
+    // Store phrase on first occurrence
+    if (!this._loopState.completionPhrase) {
+      this._loopState.completionPhrase = phrase;
+      this._loopState.lastActivity = Date.now();
+      this.emit('loopUpdate', this.loopState);
     }
 
-    // Loop was active, this is a real completion
-    this._loopState.completionPhrase = phrase;
-    this._loopState.active = false;
-    this._loopState.lastActivity = Date.now();
-
-    this.emit('completionDetected', phrase);
-    this.emit('loopUpdate', this.loopState);
+    // Emit completion if loop is active OR this is 2nd+ occurrence
+    if (this._loopState.active || count >= 2) {
+      this._loopState.active = false;
+      this._loopState.lastActivity = Date.now();
+      this.emit('completionDetected', phrase);
+      this.emit('loopUpdate', this.loopState);
+    }
   }
 
   /**
    * Detect loop start and status indicators
    */
   private detectLoopStatus(line: string): void {
-    // Check for Ralph loop start command (/ralph-loop)
+    // Check for Ralph loop start command (/ralph-loop:ralph-loop)
     if (RALPH_START_PATTERN.test(line)) {
       if (!this._loopState.active) {
         this._loopState.active = true;
@@ -382,6 +405,24 @@ export class InnerLoopTracker extends EventEmitter {
       updated = true;
     }
 
+    // Format 4: Claude Code native TodoWrite output (☐, ☒, ◐)
+    TODO_NATIVE_PATTERN.lastIndex = 0;
+    while ((match = TODO_NATIVE_PATTERN.exec(line)) !== null) {
+      const icon = match[1];
+      const content = match[2].trim();
+
+      // Skip if content matches exclude patterns (tool invocations, commentary)
+      const shouldExclude = TODO_EXCLUDE_PATTERNS.some(pattern => pattern.test(content));
+      if (shouldExclude) continue;
+
+      // Skip if content is too short or looks like partial garbage
+      if (content.length < 5) continue;
+
+      const status = this.iconToStatus(icon);
+      this.upsertTodo(content, status);
+      updated = true;
+    }
+
     if (updated) {
       this.emit('todoUpdate', this.todos);
     }
@@ -394,13 +435,17 @@ export class InnerLoopTracker extends EventEmitter {
     switch (icon) {
       case '✓':
       case '✅':
+      case '☒':  // Claude Code checked checkbox
+      case '◉':  // Filled circle (completed)
+      case '●':  // Solid circle (completed)
         return 'completed';
-      case '◐':
+      case '◐':  // Half-filled circle (in progress)
       case '⏳':
       case '⌛':
       case '🔄':
         return 'in_progress';
-      case '☐':
+      case '☐':  // Claude Code empty checkbox
+      case '○':  // Empty circle
       default:
         return 'pending';
     }
@@ -533,6 +578,7 @@ export class InnerLoopTracker extends EventEmitter {
     this._loopState = createInitialInnerLoopState(); // This sets enabled: false
     this._todos.clear();
     this._lineBuffer = '';
+    this._completionPhraseCount.clear();
     this.emit('loopUpdate', this.loopState);
     this.emit('todoUpdate', this.todos);
   }

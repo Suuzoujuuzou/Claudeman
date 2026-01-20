@@ -48,12 +48,12 @@ describe('InnerLoopTracker', () => {
       expect(freshTracker.loopState.elapsedHours).toBeNull();
     });
 
-    it('should auto-enable on /ralph-loop command', () => {
+    it('should auto-enable on /ralph-loop:ralph-loop command', () => {
       const freshTracker = new InnerLoopTracker();
       const enableHandler = vi.fn();
       freshTracker.on('enabled', enableHandler);
 
-      freshTracker.processTerminalData('/ralph-loop\n');
+      freshTracker.processTerminalData('/ralph-loop:ralph-loop\n');
 
       expect(freshTracker.enabled).toBe(true);
       expect(enableHandler).toHaveBeenCalled();
@@ -107,7 +107,7 @@ describe('InnerLoopTracker', () => {
     });
 
     it('should reset to disabled on clear', () => {
-      tracker.processTerminalData('/ralph-loop\n');
+      tracker.processTerminalData('/ralph-loop:ralph-loop\n');
       expect(tracker.enabled).toBe(true);
 
       tracker.clear();
@@ -120,6 +120,8 @@ describe('InnerLoopTracker', () => {
       const completionHandler = vi.fn();
       tracker.on('completionDetected', completionHandler);
 
+      // Start loop first (realistic workflow)
+      tracker.startLoop();
       tracker.processTerminalData('<promise>COMPLETE</promise>\n');
 
       expect(completionHandler).toHaveBeenCalledWith('COMPLETE');
@@ -130,6 +132,8 @@ describe('InnerLoopTracker', () => {
       const completionHandler = vi.fn();
       tracker.on('completionDetected', completionHandler);
 
+      // Start loop first (realistic workflow)
+      tracker.startLoop();
       tracker.processTerminalData('Output: <promise>TIME_COMPLETE</promise>\n');
 
       expect(completionHandler).toHaveBeenCalledWith('TIME_COMPLETE');
@@ -139,6 +143,8 @@ describe('InnerLoopTracker', () => {
       const completionHandler = vi.fn();
       tracker.on('completionDetected', completionHandler);
 
+      // Start loop first (realistic workflow)
+      tracker.startLoop();
       tracker.processTerminalData('<promise>MY_CUSTOM_PHRASE_123</promise>\n');
 
       expect(completionHandler).toHaveBeenCalledWith('MY_CUSTOM_PHRASE_123');
@@ -296,6 +302,67 @@ describe('InnerLoopTracker', () => {
     });
   });
 
+  describe('Todo Detection - Claude Code Native Format', () => {
+    it('should detect pending native checkbox (☐)', () => {
+      tracker.processTerminalData('☐ List files in current directory\n');
+
+      const todos = tracker.todos;
+      expect(todos).toHaveLength(1);
+      expect(todos[0].content).toBe('List files in current directory');
+      expect(todos[0].status).toBe('pending');
+    });
+
+    it('should detect completed native checkbox (☒)', () => {
+      tracker.processTerminalData('☒ Completed task\n');
+
+      const todos = tracker.todos;
+      expect(todos).toHaveLength(1);
+      expect(todos[0].status).toBe('completed');
+    });
+
+    it('should detect todos with leading bracket (⎿)', () => {
+      tracker.processTerminalData('⎿  ☐ Task with bracket\n');
+
+      const todos = tracker.todos;
+      expect(todos).toHaveLength(1);
+      expect(todos[0].content).toBe('Task with bracket');
+      expect(todos[0].status).toBe('pending');
+    });
+
+    it('should detect todos with leading whitespace', () => {
+      tracker.processTerminalData('     ☐ Indented task\n');
+
+      const todos = tracker.todos;
+      expect(todos).toHaveLength(1);
+      expect(todos[0].content).toBe('Indented task');
+    });
+
+    it('should detect in-progress native (◐)', () => {
+      tracker.processTerminalData('◐ Working on this\n');
+
+      const todos = tracker.todos;
+      expect(todos[0].status).toBe('in_progress');
+    });
+
+    it('should handle multiple native todos in sequence', () => {
+      tracker.processTerminalData('⎿  ☐ First task\n');
+      tracker.processTerminalData('   ☐ Second task\n');
+      tracker.processTerminalData('   ☒ Third task\n');
+
+      const todos = tracker.todos;
+      expect(todos).toHaveLength(3);
+      expect(todos.filter(t => t.status === 'pending')).toHaveLength(2);
+      expect(todos.filter(t => t.status === 'completed')).toHaveLength(1);
+    });
+
+    it('should auto-enable on native todo pattern', () => {
+      const freshTracker = new InnerLoopTracker();
+      freshTracker.processTerminalData('☐ New task\n');
+
+      expect(freshTracker.enabled).toBe(true);
+    });
+  });
+
   describe('Todo Updates', () => {
     it('should update existing todos by content', () => {
       // Add pending todo
@@ -419,11 +486,11 @@ describe('InnerLoopTracker', () => {
   });
 
   describe('Enhanced Ralph Detection Patterns', () => {
-    it('should detect /ralph-loop command', () => {
+    it('should detect /ralph-loop:ralph-loop command', () => {
       const loopHandler = vi.fn();
       tracker.on('loopUpdate', loopHandler);
 
-      tracker.processTerminalData('/ralph-loop\n');
+      tracker.processTerminalData('/ralph-loop:ralph-loop\n');
 
       expect(loopHandler).toHaveBeenCalled();
       expect(tracker.loopState.active).toBe(true);
