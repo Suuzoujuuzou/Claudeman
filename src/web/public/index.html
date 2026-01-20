@@ -100,6 +100,7 @@
         </div>
         <div class="ralph-controls">
           <button class="btn-icon-sm" onclick="event.stopPropagation(); app.toggleRalphDetach()" title="Detach/Attach panel" id="ralphDetachBtn">&#x29C9;</button>
+          <button class="btn-icon-sm" onclick="event.stopPropagation(); app.closeRalphTracker()" title="Close tracker">&times;</button>
         </div>
       </div>
 
@@ -229,6 +230,7 @@
           <button class="btn-icon-sm" onclick="app.reconcileScreens()" title="Refresh screens">&#x21BB;</button>
           <button class="btn-icon-sm" onclick="app.toggleMonitorDetach()" title="Detach panel" id="monitorDetachBtn">&#x29C9;</button>
           <button class="btn-icon-sm" onclick="app.toggleMonitorPanel()" title="Toggle panel" id="monitorToggleBtn">&#x25B2;</button>
+          <button class="btn-icon-sm" onclick="app.closeMonitor()" title="Close monitor">&times;</button>
         </div>
       </div>
       <div class="monitor-resize-handle" id="monitorResizeHandle"></div>
@@ -468,6 +470,14 @@
                 <span class="slider"></span>
               </label>
               <span class="form-hint">Show total token count in header</span>
+            </div>
+            <div class="form-row form-row-switch">
+              <label>Show Monitor Panel</label>
+              <label class="switch">
+                <input type="checkbox" id="appSettingsShowMonitor" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="form-hint">Show Monitor panel at bottom right</span>
             </div>
           </div>
           <div class="settings-section">

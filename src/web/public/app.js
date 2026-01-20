@@ -51,6 +51,7 @@ class ClaudemanApp {
     this.initTerminal();
     this.loadFontSize();
     this.applyHeaderVisibilitySettings();
+    this.applyMonitorVisibility();
     this.connectSSE();
     this.loadState();
     this.loadQuickStartCases();
@@ -1662,6 +1663,7 @@ class ClaudemanApp {
     document.getElementById('appSettingsShowFontControls').checked = settings.showFontControls ?? true;
     document.getElementById('appSettingsShowSystemStats').checked = settings.showSystemStats ?? true;
     document.getElementById('appSettingsShowTokenCount').checked = settings.showTokenCount ?? true;
+    document.getElementById('appSettingsShowMonitor').checked = settings.showMonitor ?? true;
     document.getElementById('appSettingsModal').classList.add('active');
   }
 
@@ -1678,6 +1680,7 @@ class ClaudemanApp {
       showFontControls: document.getElementById('appSettingsShowFontControls').checked,
       showSystemStats: document.getElementById('appSettingsShowSystemStats').checked,
       showTokenCount: document.getElementById('appSettingsShowTokenCount').checked,
+      showMonitor: document.getElementById('appSettingsShowMonitor').checked,
     };
 
     // Save to localStorage
@@ -1685,6 +1688,7 @@ class ClaudemanApp {
 
     // Apply header visibility immediately
     this.applyHeaderVisibilitySettings();
+    this.applyMonitorVisibility();
 
     // Also save to server
     try {
@@ -1740,6 +1744,28 @@ class ClaudemanApp {
     if (tokenCountEl) {
       tokenCountEl.style.display = showTokenCount ? '' : 'none';
     }
+  }
+
+  applyMonitorVisibility() {
+    const settings = this.loadAppSettingsFromStorage();
+    const showMonitor = settings.showMonitor ?? true;
+    const monitorPanel = document.getElementById('monitorPanel');
+    if (monitorPanel) {
+      monitorPanel.style.display = showMonitor ? '' : 'none';
+    }
+  }
+
+  closeMonitor() {
+    // Hide the monitor panel
+    const monitorPanel = document.getElementById('monitorPanel');
+    if (monitorPanel) {
+      monitorPanel.classList.remove('open');
+      monitorPanel.style.display = 'none';
+    }
+    // Save the setting
+    const settings = this.loadAppSettingsFromStorage();
+    settings.showMonitor = false;
+    localStorage.setItem('claudeman-app-settings', JSON.stringify(settings));
   }
 
   async loadAppSettingsFromServer() {
@@ -1997,6 +2023,21 @@ class ClaudemanApp {
         this.fitAddon.fit();
       }
     });
+  }
+
+  async closeRalphTracker() {
+    if (!this.activeSessionId) return;
+
+    // Disable tracker via API
+    await fetch(`/api/sessions/${this.activeSessionId}/inner-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false })
+    });
+
+    // Clear local state and hide panel
+    this.innerStates.delete(this.activeSessionId);
+    this.renderInnerStatePanel();
   }
 
   toggleRalphDetach() {
