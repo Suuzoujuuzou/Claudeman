@@ -280,6 +280,7 @@ npx agent-browser open http://localhost:3000 && npx agent-browser snapshot
 | POST | `/api/sessions/:id/respawn/start` | Start respawn controller |
 | POST | `/api/sessions/:id/respawn/stop` | Stop respawn controller |
 | POST | `/api/sessions/:id/respawn/enable` | Enable respawn with config + optional timer |
+| PUT | `/api/sessions/:id/respawn/config` | Update config on running respawn |
 | POST | `/api/sessions/:id/inner-config` | Configure Ralph Wiggum loop settings |
 | GET | `/api/sessions/:id/inner-state` | Get Ralph loop state + todos |
 | POST | `/api/sessions/:id/auto-compact` | Configure auto-compact threshold |
