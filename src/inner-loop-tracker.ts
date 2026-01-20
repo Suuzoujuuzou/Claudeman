@@ -56,6 +56,19 @@ const MAX_ITERATIONS_PATTERN = /max[_-]?iterations?\s*[=:]\s*(\d+)/i;
 // TodoWrite tool output - detect the tool being used
 const TODOWRITE_PATTERN = /TodoWrite|todo(?:s)?\s*(?:updated|written|saved)|Todos have been modified/i;
 
+// All tasks complete patterns - detect when Claude says all work is done
+// Includes patterns like "All 8 files have been created", "All tasks completed"
+const ALL_COMPLETE_PATTERN = /all\s+(?:\d+\s+)?(?:tasks?|files?|items?)\s+(?:have\s+been\s+|are\s+)?(?:completed?|done|finished|created)|completed?\s+all\s+(?:\d+\s+)?tasks?|all\s+done|everything\s+(?:is\s+)?(?:completed?|done)|finished\s+all\s+tasks?/i;
+
+// Pattern to extract count from "All 8 files created" type messages
+const ALL_COUNT_PATTERN = /all\s+(\d+)\s+(?:tasks?|files?|items?)/i;
+
+// Individual task completion patterns - detect when Claude marks a specific task done
+const TASK_DONE_PATTERN = /(?:task|item|todo)\s*(?:#?\d+|"\s*[^"]+\s*")?\s*(?:is\s+)?(?:done|completed?|finished)|(?:completed?|done|finished)\s+(?:task|item)\s*(?:#?\d+)?|marking\s+(?:.*?\s+)?(?:as\s+)?completed?|marked\s+(?:.*?\s+)?(?:as\s+)?completed?/i;
+
+// Generic completion signals (be careful with these - can be false positives)
+const COMPLETION_SIGNAL_PATTERN = /^(?:done|completed?|finished|all\s+set)!?\s*$/i;
+
 // ANSI escape code removal for cleaner parsing
 // Matches color codes (\x1b[...m), cursor movement (\x1b[...H, \x1b[...C, etc.), and other sequences
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g;
@@ -117,6 +130,33 @@ export class InnerLoopTracker extends EventEmitter {
       this._loopState.lastActivity = Date.now();
       this.emit('loopUpdate', this.loopState);
     }
+  }
+
+  /**
+   * Reset the tracker to initial state (for when a new task/loop starts)
+   * Clears all todos, completion phrase, and loop state while keeping enabled status
+   */
+  reset(): void {
+    const wasEnabled = this._loopState.enabled;
+    this._loopState = createInitialInnerLoopState();
+    this._loopState.enabled = wasEnabled;  // Keep enabled status
+    this._todos.clear();
+    this._completionPhraseCount.clear();
+    this._lineBuffer = '';
+    this.emit('loopUpdate', this.loopState);
+    this.emit('todoUpdate', this.todos);
+  }
+
+  /**
+   * Full reset including enabled state (for complete cleanup)
+   */
+  fullReset(): void {
+    this._loopState = createInitialInnerLoopState();
+    this._todos.clear();
+    this._completionPhraseCount.clear();
+    this._lineBuffer = '';
+    this.emit('loopUpdate', this.loopState);
+    this.emit('todoUpdate', this.todos);
   }
 
   get loopState(): InnerLoopState {
@@ -210,6 +250,16 @@ export class InnerLoopTracker extends EventEmitter {
       return true;
     }
 
+    // All tasks complete signals
+    if (ALL_COMPLETE_PATTERN.test(data)) {
+      return true;
+    }
+
+    // Task completion signals
+    if (TASK_DONE_PATTERN.test(data)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -223,11 +273,95 @@ export class InnerLoopTracker extends EventEmitter {
     // Check for completion phrase
     this.detectCompletionPhrase(trimmed);
 
+    // Check for "all tasks complete" signals
+    this.detectAllTasksComplete(trimmed);
+
+    // Check for individual task completion signals
+    this.detectTaskCompletion(trimmed);
+
     // Check for loop start/status
     this.detectLoopStatus(trimmed);
 
     // Check for todo items
     this.detectTodoItems(trimmed);
+  }
+
+  /**
+   * Detect "all tasks complete" messages
+   * When detected: marks all todos as complete AND emits completion event
+   */
+  private detectAllTasksComplete(line: string): void {
+    // Only trigger if line is a clear standalone completion message
+    // Avoid matching commentary like "once all tasks are complete..."
+    if (!ALL_COMPLETE_PATTERN.test(line)) return;
+
+    // Must be a reasonably short line (< 100 chars) to be a completion signal, not commentary
+    if (line.length > 100) return;
+
+    // Skip if this looks like it's part of the original prompt (contains "output:")
+    if (line.toLowerCase().includes('output:') || line.includes('<promise>')) return;
+
+    // Don't trigger if we haven't seen any todos yet
+    if (this._todos.size === 0) return;
+
+    // Check if the count matches our todo count (e.g., "All 8 files created")
+    const countMatch = line.match(ALL_COUNT_PATTERN);
+    const mentionedCount = countMatch ? parseInt(countMatch[1]) : null;
+    const todoCount = this._todos.size;
+
+    // If a count is mentioned, it should match our todo count (within reason)
+    if (mentionedCount !== null && Math.abs(mentionedCount - todoCount) > 2) {
+      // Count doesn't match our todos, might be unrelated
+      return;
+    }
+
+    // Mark all todos as complete
+    let updated = false;
+    for (const todo of this._todos.values()) {
+      if (todo.status !== 'completed') {
+        todo.status = 'completed';
+        updated = true;
+      }
+    }
+    if (updated) {
+      this.emit('todoUpdate', this.todos);
+    }
+
+    // Emit completion if we have an expected phrase
+    if (this._loopState.completionPhrase) {
+      this._loopState.active = false;
+      this._loopState.lastActivity = Date.now();
+      this.emit('completionDetected', this._loopState.completionPhrase);
+      this.emit('loopUpdate', this.loopState);
+    }
+  }
+
+  /**
+   * Detect individual task completion signals
+   * e.g., "Task 8 is done", "marked as completed"
+   *
+   * NOTE: This is intentionally conservative to avoid jitter.
+   * Only marks a todo complete if we can match it by task number.
+   */
+  private detectTaskCompletion(line: string): void {
+    if (!TASK_DONE_PATTERN.test(line)) return;
+
+    // Only act on explicit task number references like "Task 8 is done"
+    const taskNumMatch = line.match(/task\s*#?(\d+)/i);
+    if (taskNumMatch) {
+      const taskNum = parseInt(taskNumMatch[1]);
+      // Find the nth todo (by order) and mark it complete
+      let count = 0;
+      for (const [id, todo] of this._todos) {
+        count++;
+        if (count === taskNum && todo.status !== 'completed') {
+          todo.status = 'completed';
+          this.emit('todoUpdate', this.todos);
+          break;
+        }
+      }
+    }
+    // Don't guess which todo to mark - let the checkbox detection handle it
   }
 
   /**
@@ -243,12 +377,67 @@ export class InnerLoopTracker extends EventEmitter {
 
   /**
    * Detect <promise>PHRASE</promise> completion phrases
+   * Also detects bare phrase (without tags) if we already know the expected phrase
    */
   private detectCompletionPhrase(line: string): void {
+    // First check for tagged phrase: <promise>PHRASE</promise>
     const match = line.match(PROMISE_PATTERN);
     if (match) {
       this.handleCompletionPhrase(match[1]);
+      return;
     }
+
+    // If we have an expected completion phrase, also check for bare phrase
+    // This handles cases where Claude outputs "ALL_TASKS_DONE" without the tags
+    const expectedPhrase = this._loopState.completionPhrase;
+    if (expectedPhrase && line.includes(expectedPhrase)) {
+      // Avoid false positives: don't trigger on the original prompt echo
+      // Only trigger if line looks like completion output (standalone or at end)
+      const isStandalone = line.trim() === expectedPhrase;
+      const isAtEnd = line.trim().endsWith(expectedPhrase);
+      const isNotInPromptContext = !line.includes('<promise>') && !line.includes('output:');
+
+      if ((isStandalone || isAtEnd) && isNotInPromptContext) {
+        this.handleBareCompletionPhrase(expectedPhrase);
+      }
+    }
+  }
+
+  /**
+   * Handle a bare completion phrase (without tags)
+   * Emits completion if we've already seen the tagged version in the prompt
+   * and this appears to be actual completion output (not prompt echo)
+   */
+  private handleBareCompletionPhrase(phrase: string): void {
+    // Only count if this phrase was already seen in tagged form (from the prompt)
+    const taggedCount = this._completionPhraseCount.get(phrase) || 0;
+    if (taggedCount === 0) return;
+
+    // Track bare occurrences to avoid double-firing
+    const bareKey = `bare:${phrase}`;
+    const bareCount = (this._completionPhraseCount.get(bareKey) || 0) + 1;
+    this._completionPhraseCount.set(bareKey, bareCount);
+
+    // Only fire once for bare phrase
+    if (bareCount > 1) return;
+
+    // Mark all todos as complete (since we've reached the completion phrase)
+    let updated = false;
+    for (const todo of this._todos.values()) {
+      if (todo.status !== 'completed') {
+        todo.status = 'completed';
+        updated = true;
+      }
+    }
+    if (updated) {
+      this.emit('todoUpdate', this.todos);
+    }
+
+    // Emit completion event
+    this._loopState.active = false;
+    this._loopState.lastActivity = Date.now();
+    this.emit('completionDetected', phrase);
+    this.emit('loopUpdate', this.loopState);
   }
 
   /**
@@ -272,6 +461,18 @@ export class InnerLoopTracker extends EventEmitter {
 
     // Emit completion if loop is active OR this is 2nd+ occurrence
     if (this._loopState.active || count >= 2) {
+      // Mark all todos as complete when completion phrase is detected
+      let updated = false;
+      for (const todo of this._todos.values()) {
+        if (todo.status !== 'completed') {
+          todo.status = 'completed';
+          updated = true;
+        }
+      }
+      if (updated) {
+        this.emit('todoUpdate', this.todos);
+      }
+
       this._loopState.active = false;
       this._loopState.lastActivity = Date.now();
       this.emit('completionDetected', phrase);
@@ -457,8 +658,15 @@ export class InnerLoopTracker extends EventEmitter {
     // Skip empty or whitespace-only content
     if (!content || !content.trim()) return;
 
-    // Generate a stable ID from content
-    const id = this.generateTodoId(content);
+    // Clean content: remove ANSI codes, collapse whitespace, trim
+    const cleanContent = content
+      .replace(ANSI_ESCAPE_PATTERN, '')  // Remove ANSI escape codes
+      .replace(/\s+/g, ' ')              // Collapse whitespace
+      .trim();
+    if (cleanContent.length < 5) return;  // Skip very short content
+
+    // Generate a stable ID from normalized content
+    const id = this.generateTodoId(cleanContent);
 
     const existing = this._todos.get(id);
     if (existing) {
@@ -477,7 +685,7 @@ export class InnerLoopTracker extends EventEmitter {
 
       this._todos.set(id, {
         id,
-        content,
+        content: cleanContent,
         status,
         detectedAt: Date.now(),
       });
@@ -485,15 +693,35 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
+   * Normalize todo content for consistent matching
+   * - Collapse multiple whitespace to single space
+   * - Remove trailing garbage characters
+   * - Trim whitespace
+   */
+  private normalizeTodoContent(content: string): string {
+    if (!content) return '';
+    return content
+      .replace(/\s+/g, ' ')           // Collapse whitespace
+      .replace(/[^a-zA-Z0-9\s.,!?'"-]/g, '')  // Remove special chars (keep punctuation)
+      .trim()
+      .toLowerCase();
+  }
+
+  /**
    * Generate a stable ID from todo content using djb2 hash
+   * Content is normalized first to prevent duplicates from terminal artifacts
    */
   private generateTodoId(content: string): string {
     if (!content) return 'todo-empty';
 
+    // Normalize content for consistent hashing
+    const normalized = this.normalizeTodoContent(content);
+    if (!normalized) return 'todo-empty';
+
     // djb2 hash algorithm - good distribution for strings
     let hash = 5381;
-    for (let i = 0; i < content.length; i++) {
-      hash = ((hash << 5) + hash) ^ content.charCodeAt(i);
+    for (let i = 0; i < normalized.length; i++) {
+      hash = ((hash << 5) + hash) ^ normalized.charCodeAt(i);
       hash = hash | 0; // Convert to 32-bit integer
     }
     return `todo-${Math.abs(hash).toString(36)}`;
