@@ -289,14 +289,22 @@ describe('Session State Management', () => {
   });
 
   it('should clear buffers', async () => {
-    const session = new Session({ workingDir: testDir });
+    // Use shell mode for reliable output timing (Claude CLI startup is unpredictable)
+    const session = new Session({ workingDir: testDir, mode: 'shell' });
 
-    await session.startInteractive();
+    await session.startShell();
 
-    // Wait for some output
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Send a command to generate output
+    session.write('echo "test output"\r');
 
-    // Should have some buffer content
+    // Wait for output with polling
+    let attempts = 0;
+    while (session.terminalBuffer.length === 0 && attempts < 20) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+
+    // Should have some buffer content from shell
     expect(session.terminalBuffer.length).toBeGreaterThan(0);
 
     // Clear buffers

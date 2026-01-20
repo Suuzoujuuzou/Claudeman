@@ -119,7 +119,6 @@ export class Session extends EventEmitter {
   private _screenManager: ScreenManager | null = null;
   private _screenSession: ScreenSession | null = null;
   private _useScreen: boolean = false;
-  private _stripLeadingNewlines: boolean = false; // Strip leading newlines after buffer clear
 
   // Inner loop tracking (Ralph Wiggum loops and todo lists inside Claude Code)
   private _innerLoopTracker: InnerLoopTracker;
@@ -388,7 +387,7 @@ export class Session extends EventEmitter {
         // Check if we already have a screen session (restored session)
         const isRestoredSession = this._screenSession !== null;
         if (isRestoredSession) {
-          console.log('[Session] Attaching to existing screen session:', this._screenSession.screenName);
+          console.log('[Session] Attaching to existing screen session:', this._screenSession!.screenName);
         } else {
           // Create a new screen session
           this._screenSession = await this._screenManager.createScreen(this.id, this.workingDir, 'claude', this._name);
@@ -400,7 +399,7 @@ export class Session extends EventEmitter {
 
         // Attach to the screen session via PTY
         this.ptyProcess = pty.spawn('screen', [
-          '-x', this._screenSession.screenName
+          '-x', this._screenSession!.screenName
         ], {
           name: 'xterm-256color',
           cols: 120,
@@ -409,14 +408,24 @@ export class Session extends EventEmitter {
           env: { ...process.env, TERM: 'xterm-256color' },
         });
 
-        // For NEW screens: clear buffer after initial burst (screen initialization noise)
-        // For RESTORED screens: don't clear - we want to see the existing output
+        // For NEW screens: wait for prompt to appear then clean buffer
+        // For RESTORED screens: don't do anything - client will fetch buffer on tab switch
         if (!isRestoredSession) {
-          setTimeout(() => {
-            this._terminalBuffer = '';
-            this._stripLeadingNewlines = true; // Strip leading newlines from Claude's output
-            this.emit('clearTerminal');
-          }, 100);
+          const checkForPrompt = setInterval(() => {
+            // Wait for the prompt character (❯) which means Claude is fully initialized
+            if (this._terminalBuffer.includes('❯') || this._terminalBuffer.includes('\u276f')) {
+              clearInterval(checkForPrompt);
+              // Clean the buffer - remove screen init junk before actual content
+              // Strip: cursor movement (\x1b[nA/B/C/D), positioning (\x1b[n;nH),
+              // clear screen (\x1b[2J), scroll region (\x1b[n;nr), and whitespace
+              this._terminalBuffer = this._terminalBuffer
+                .replace(/^(\x1b\[\??[\d;]*[A-Za-z]|[\s\r\n])+/, '');
+              // Signal client to refresh
+              this.emit('clearTerminal');
+            }
+          }, 50);
+          // Timeout after 5 seconds if prompt not found
+          setTimeout(() => clearInterval(checkForPrompt), 5000);
         }
       } catch (err) {
         console.error('[Session] Failed to create screen session, falling back to direct PTY:', err);
@@ -442,20 +451,11 @@ export class Session extends EventEmitter {
     console.log('[Session] Interactive PTY spawned with PID:', this._pid);
 
     this.ptyProcess.onData((rawData: string) => {
-      // Filter out focus escape sequences
-      let data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
-      if (!data) return; // Skip if only focus sequences
-
-      // Strip leading newlines after buffer clear (screen attach outputs blank lines)
-      if (this._stripLeadingNewlines) {
-        data = data.replace(/^[\r\n]+/, '');
-        // Clear flag once we have actual content
-        if (data.length > 0) {
-          this._stripLeadingNewlines = false;
-        } else {
-          return; // Skip empty data after stripping
-        }
-      }
+      // Filter out focus escape sequences and Ctrl+L (form feed)
+      const data = rawData
+        .replace(FOCUS_ESCAPE_FILTER, '')
+        .replace(/\x0c/g, '');  // Remove Ctrl+L
+      if (!data) return; // Skip if only filtered sequences
 
       this._terminalBuffer += data;
       this._lastActivityAt = Date.now();
@@ -540,7 +540,7 @@ export class Session extends EventEmitter {
         // Check if we already have a screen session (restored session)
         const isRestoredSession = this._screenSession !== null;
         if (isRestoredSession) {
-          console.log('[Session] Attaching to existing screen session:', this._screenSession.screenName);
+          console.log('[Session] Attaching to existing screen session:', this._screenSession!.screenName);
         } else {
           // Create a new screen session
           this._screenSession = await this._screenManager.createScreen(this.id, this.workingDir, 'shell', this._name);
@@ -552,7 +552,7 @@ export class Session extends EventEmitter {
 
         // Attach to the screen session via PTY
         this.ptyProcess = pty.spawn('screen', [
-          '-x', this._screenSession.screenName
+          '-x', this._screenSession!.screenName
         ], {
           name: 'xterm-256color',
           cols: 120,

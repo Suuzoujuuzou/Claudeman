@@ -198,7 +198,13 @@ describe('Resource Management', () => {
   }, 60000);
 
   it('should handle rapid session creation and deletion', async () => {
+    // Get initial session count (may have restored sessions from other tests)
+    const initialRes = await fetch(`${baseUrl}/api/sessions`);
+    const initialSessions = await initialRes.json();
+    const initialCount = initialSessions.length;
+
     const iterations = 5;
+    const createdSessionIds: string[] = [];
 
     for (let i = 0; i < iterations; i++) {
       const caseName = `rapid-${Date.now()}-${i}`;
@@ -212,6 +218,7 @@ describe('Resource Management', () => {
       });
       const createData = await createRes.json();
       expect(createData.success).toBe(true);
+      createdSessionIds.push(createData.sessionId);
 
       // Delete immediately
       const deleteRes = await fetch(`${baseUrl}/api/sessions/${createData.sessionId}`, {
@@ -219,12 +226,25 @@ describe('Resource Management', () => {
       });
       const deleteData = await deleteRes.json();
       expect(deleteData.success).toBe(true);
+
+      // Small delay to allow async cleanup to complete
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    // Verify no sessions remain
+    // Wait a bit more for all cleanup to complete
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Verify created sessions were deleted (account for restored sessions from other tests)
     const listRes = await fetch(`${baseUrl}/api/sessions`);
     const sessions = await listRes.json();
-    expect(sessions.length).toBe(0);
+
+    // None of the sessions we created should still exist
+    for (const sessionId of createdSessionIds) {
+      expect(sessions.find((s: { id: string }) => s.id === sessionId)).toBeUndefined();
+    }
+
+    // Session count should be back to initial (or less if some restored sessions were cleaned up)
+    expect(sessions.length).toBeLessThanOrEqual(initialCount);
   });
 
   it('should clear terminal buffer after session stop', async () => {

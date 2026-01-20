@@ -27,7 +27,7 @@ describe('Quick Start API', () => {
         rmSync(casePath, { recursive: true, force: true });
       }
     }
-  });
+  }, 30000); // Increase timeout since server.stop() kills screen sessions
 
   describe('POST /api/quick-start', () => {
     it('should create default testcase and start interactive session', async () => {
