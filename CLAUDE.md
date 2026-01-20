@@ -24,7 +24,7 @@ npx tsx src/index.ts web -p 8080   # Dev mode with custom port
 node dist/index.js web             # After npm run build
 claudeman web                      # After npm link
 
-# Testing (vitest - tests run against WebServer, no real Claude CLI spawned)
+# Testing (vitest with globals: true - no imports needed for describe/it/expect)
 npm run test                              # Run all tests once
 npm run test:watch                        # Watch mode
 npm run test:coverage                     # With coverage report
@@ -32,6 +32,7 @@ npx vitest run test/session.test.ts       # Single file
 npx vitest run -t "should create session" # By pattern
 # Tests use ports 3099-3121 to avoid conflicts with dev server (3000)
 # Test timeout: 30s (configured in vitest.config.ts for integration tests)
+# Tests mock PTY - no real Claude CLI spawned
 
 # TypeScript checking (no linter configured)
 npx tsc --noEmit                          # Type check without building
@@ -158,21 +159,47 @@ pty.spawn('claude', ['--dangerously-skip-permissions'], { ... })
 pty.spawn('bash', [], { ... })
 ```
 
-### Screen Input for Ink/Claude CLI
+### Sending Input to Sessions
 
-Claude CLI uses Ink (React for terminals) which has specific input handling. When sending programmatic input via `screen -X stuff`:
+There are two methods for sending input to Claude sessions:
 
-**IMPORTANT**: Text and Enter key MUST be sent as separate commands:
-```bash
-# Correct - two separate commands
-screen -S claudeman-xxx -p 0 -X stuff "hello world"
-screen -S claudeman-xxx -p 0 -X stuff "$(printf '\015')"
-
-# Wrong - doesn't work with Ink
-screen -S claudeman-xxx -p 0 -X stuff "$(printf 'hello world\015')"
+#### 1. `session.write(data)` - Direct PTY write
+Used by the `/api/sessions/:id/input` API endpoint. Writes directly to PTY.
+```typescript
+session.write('hello world');  // Text only, no Enter
+session.write('\r');           // Enter key separately
 ```
 
-The `\015` (octal) is carriage return (ASCII 13), which Ink interprets as `key.return` for submission. Use `writeViaScreen()` method for programmatic input that needs Enter key.
+#### 2. `session.writeViaScreen(data)` - Via GNU screen (RECOMMENDED for programmatic input)
+Used by RespawnController, auto-compact, auto-clear. More reliable for Ink/Claude CLI.
+```typescript
+// Append \r to include Enter - the method handles splitting automatically
+session.writeViaScreen('your command here\r');
+session.writeViaScreen('/clear\r');
+session.writeViaScreen('/init\r');
+```
+
+**How `writeViaScreen` works internally** (in `screen-manager.ts:sendInput`):
+1. Splits input into text and `\r` (carriage return)
+2. Sends text first: `screen -S name -p 0 -X stuff "text"`
+3. Sends Enter separately: `screen -S name -p 0 -X stuff "$(printf '\015')"`
+
+**Why separate commands?** Claude CLI uses Ink (React for terminals) which requires text and Enter as separate `screen -X stuff` commands. Combining them doesn't work.
+
+#### API Usage
+```bash
+# Send text (won't submit until Enter is sent)
+curl -X POST localhost:3000/api/sessions/:id/input \
+  -H "Content-Type: application/json" \
+  -d '{"input": "your prompt here"}'
+
+# Send Enter separately to submit
+curl -X POST localhost:3000/api/sessions/:id/input \
+  -H "Content-Type: application/json" \
+  -d '{"input": "\r"}'
+```
+
+**Note**: The API uses `session.write()` which goes to PTY directly. For reliability with Ink, consider using the respawn controller pattern or adding an API endpoint that uses `writeViaScreen()`.
 
 ### Idle Detection
 
@@ -289,6 +316,17 @@ npx agent-browser open http://localhost:3000 && npx agent-browser snapshot
 | GET | `/api/cases` | List available cases |
 | POST | `/api/cases` | Create new case |
 | GET | `/api/screens` | List screen sessions with stats |
+
+## CLI Commands (when using `claudeman` globally)
+
+```bash
+claudeman web [-p PORT]              # Start web interface
+claudeman start [--dir PATH]         # Start Claude session
+claudeman list                       # List sessions
+claudeman task add "PROMPT"          # Add task to queue
+claudeman ralph start [--min-hours N] # Start autonomous loop
+claudeman status                     # Overall status
+```
 
 ## Notes
 
