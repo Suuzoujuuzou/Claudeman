@@ -640,6 +640,77 @@ class ClaudemanApp {
 
   _renderSessionTabsImmediate() {
     const container = this.$('sessionTabs');
+    const existingTabs = container.querySelectorAll('.session-tab[data-id]');
+    const existingIds = new Set([...existingTabs].map(t => t.dataset.id));
+    const currentIds = new Set(this.sessions.keys());
+
+    // Check if we can do incremental update (same session IDs)
+    const canIncremental = existingIds.size === currentIds.size &&
+      [...existingIds].every(id => currentIds.has(id));
+
+    if (canIncremental) {
+      // Incremental update - only modify changed properties
+      for (const [id, session] of this.sessions) {
+        const tab = container.querySelector(`.session-tab[data-id="${id}"]`);
+        if (!tab) continue;
+
+        const isActive = id === this.activeSessionId;
+        const status = session.status || 'idle';
+        const name = this.getSessionName(session);
+        const taskStats = session.taskStats || { running: 0, total: 0 };
+        const hasRunningTasks = taskStats.running > 0;
+
+        // Update active class
+        if (isActive && !tab.classList.contains('active')) {
+          tab.classList.add('active');
+        } else if (!isActive && tab.classList.contains('active')) {
+          tab.classList.remove('active');
+        }
+
+        // Update status indicator
+        const statusEl = tab.querySelector('.tab-status');
+        if (statusEl && !statusEl.classList.contains(status)) {
+          statusEl.className = `tab-status ${status}`;
+        }
+
+        // Update name if changed
+        const nameEl = tab.querySelector('.tab-name');
+        if (nameEl && nameEl.textContent !== name) {
+          nameEl.textContent = name;
+        }
+
+        // Update task badge
+        const badgeEl = tab.querySelector('.tab-badge');
+        if (hasRunningTasks) {
+          if (badgeEl) {
+            if (badgeEl.textContent !== String(taskStats.running)) {
+              badgeEl.textContent = taskStats.running;
+            }
+          } else {
+            // Need to add badge - do full rebuild
+            this._fullRenderSessionTabs();
+            return;
+          }
+        } else if (badgeEl) {
+          // Need to remove badge - do full rebuild
+          this._fullRenderSessionTabs();
+          return;
+        }
+      }
+    } else {
+      // Full rebuild needed (sessions added/removed)
+      this._fullRenderSessionTabs();
+    }
+
+    // Auto-focus: if there's exactly one session and none is active, select it
+    if (this.sessions.size === 1 && !this.activeSessionId) {
+      const [sessionId] = this.sessions.keys();
+      this.selectSession(sessionId);
+    }
+  }
+
+  _fullRenderSessionTabs() {
+    const container = this.$('sessionTabs');
 
     // Build tabs HTML using array for better string concatenation performance
     const parts = [];
@@ -662,12 +733,6 @@ class ClaudemanApp {
     }
 
     container.innerHTML = parts.join('');
-
-    // Auto-focus: if there's exactly one session and none is active, select it
-    if (this.sessions.size === 1 && !this.activeSessionId) {
-      const [sessionId] = this.sessions.keys();
-      this.selectSession(sessionId);
-    }
   }
 
   getSessionName(session) {
