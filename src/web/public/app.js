@@ -956,6 +956,7 @@ class ClaudemanApp {
       if (!select.dataset.listenerAdded) {
         select.addEventListener('change', () => {
           this.updateDirDisplayForCase(select.value);
+          this.saveLastUsedCase(select.value);
         });
         select.dataset.listenerAdded = 'true';
       }
@@ -974,6 +975,24 @@ class ClaudemanApp {
       }
     } catch (err) {
       document.getElementById('dirDisplay').textContent = caseName;
+    }
+  }
+
+  async saveLastUsedCase(caseName) {
+    try {
+      // Get current settings
+      const res = await fetch('/api/settings');
+      const settings = res.ok ? await res.json() : {};
+      // Update lastUsedCase
+      settings.lastUsedCase = caseName;
+      // Save back
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+    } catch (err) {
+      console.error('Failed to save last used case:', err);
     }
   }
 
@@ -1067,13 +1086,16 @@ class ClaudemanApp {
         if (!createData.success) throw new Error(createData.error);
 
         // Apply global Ralph tracker setting
-        if (ralphEnabled) {
-          await fetch(`/api/sessions/${createData.session.id}/inner-config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: true })
-          });
-        }
+        // If enabled: enable the tracker
+        // If disabled: disable auto-enable to prevent pattern-based activation
+        await fetch(`/api/sessions/${createData.session.id}/inner-config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: ralphEnabled,
+            disableAutoEnable: !ralphEnabled
+          })
+        });
 
         // Start interactive mode
         await fetch(`/api/sessions/${createData.session.id}/interactive`, {
@@ -2711,6 +2733,8 @@ class ClaudemanApp {
         this.showToast(`Case "${name}" created`, 'success');
         // Reload cases and select the new one
         await this.loadQuickStartCases(name);
+        // Save as last used case
+        await this.saveLastUsedCase(name);
       } else {
         this.showToast(data.error || 'Failed to create case', 'error');
       }
@@ -2752,6 +2776,8 @@ class ClaudemanApp {
         this.showToast(`Case "${name}" linked to ${path}`, 'success');
         // Reload cases and select the new one
         await this.loadQuickStartCases(name);
+        // Save as last used case
+        await this.saveLastUsedCase(name);
       } else {
         this.showToast(data.error || 'Failed to link case', 'error');
       }
