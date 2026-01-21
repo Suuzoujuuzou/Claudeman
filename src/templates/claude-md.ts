@@ -20,12 +20,32 @@ export function generateClaudeMd(caseName: string, description: string = '', tem
 
   return `# CLAUDE.md - Project Configuration
 
-## Project Overview
+## Setup
+Copy these files to your new project:
+- \`CLAUDE.md\` → project root
+- \`.claude/settings.json\` → \`.claude/settings.json\`
 
+Then update the Project Overview section below.
+
+---
+
+## Project Overview
+<!-- Update this section with project-specific details -->
 - **Project Name**: ${caseName}
 - **Description**: ${description || 'A new project'}
 - **Tech Stack**: [TECHNOLOGIES_USED]
 - **Last Updated**: ${date}
+
+---
+
+## Claudeman Environment
+
+This session is managed by **Claudeman** and runs within a GNU Screen session.
+
+**Important**: Check for \`CLAUDEMAN_SCREEN=1\` environment variable to confirm.
+- Do NOT attempt to kill your own screen session
+- The session persists across disconnects - your work is safe
+- Token usage, costs, and background tasks are tracked externally
 
 ---
 
@@ -46,6 +66,52 @@ Full permissions granted. Act decisively without asking - read, write, edit, exe
 
 ### Thinking
 Extended thinking is enabled. Use deep reasoning for complex architectural decisions, difficult bugs, and multi-file changes.
+
+### Task Tracking (TodoWrite)
+**ALWAYS use TodoWrite** to track tasks. This is non-negotiable for anything beyond trivial single-step work.
+
+**When to use TodoWrite:**
+- Multi-step tasks (3+ steps)
+- Bug fixes requiring investigation
+- Feature implementations
+- Any work where progress tracking helps
+- When the user provides multiple requests
+
+**How to use it:**
+1. **Before starting**: Break down the work into discrete todos
+2. **During work**: Mark each todo \`in_progress\` before starting, \`completed\` when done
+3. **One at a time**: Only ONE todo should be \`in_progress\` at any moment
+4. **Immediately**: Mark todos complete the moment they're done - don't batch
+
+**Why this matters:**
+- Gives the user visibility into your progress
+- Prevents forgetting tasks mid-work
+- Creates accountability checkpoints
+- Makes complex work manageable
+
+**Example workflow:**
+\`\`\`
+User: "Add user authentication with JWT"
+
+→ TodoWrite:
+  - [ ] Research existing auth patterns in codebase
+  - [ ] Implement JWT token generation
+  - [ ] Add login endpoint
+  - [ ] Add token validation middleware
+  - [ ] Add protected route example
+  - [ ] Write tests
+
+→ Mark "Research existing auth patterns" as in_progress
+→ Do the research
+→ Mark as completed, mark next as in_progress
+→ Continue until all done
+\`\`\`
+
+**Anti-patterns to avoid:**
+- Starting work without creating todos first
+- Having multiple todos \`in_progress\` simultaneously
+- Batching completions at the end
+- Skipping TodoWrite for "simple" multi-step tasks
 
 ---
 
@@ -100,8 +166,8 @@ Planning mode flow: read-only exploration → create plan → get approval → e
 Ralph loops enable persistent, autonomous work on large tasks. When active, you continue iterating until completion criteria are met or the loop is cancelled.
 
 ### Starting a Ralph Loop
-- Start: \`/ralph-loop\`
-- Cancel: \`/cancel-ralph\`
+- Start: \`/ralph-loop:ralph-loop\`
+- Cancel: \`/ralph-loop:cancel-ralph\`
 - Help: \`/ralph-loop:help\`
 
 ### Time-Aware Loops
@@ -145,6 +211,27 @@ echo "Elapsed: $ELAPSED_HOURS hours"
 - Code cleanup and dead code removal
 - Dependency updates
 - Type safety improvements
+
+**Example time-aware prompt:**
+\`\`\`
+"Optimize the API endpoints for the next 4 hours. Focus on performance first,
+then code quality. Minimum runtime: 4 hours."
+Completion phrase: <promise>TIME_COMPLETE</promise>
+\`\`\`
+
+**Time-aware loop behavior:**
+\`\`\`
+[Start loop, record timestamp]
+[Complete primary optimization tasks - 2 hours elapsed]
+[Check time: 2/4 hours - NOT done yet]
+[Self-generate: "Add caching to database queries"]
+[Self-generate: "Optimize N+1 queries"]
+[Self-generate: "Add request batching"]
+[Continue working... 4.5 hours elapsed]
+[Check time: 4.5/4 hours - minimum reached]
+[All tasks complete, tests pass]
+<promise>TIME_COMPLETE</promise>
+\`\`\`
 
 ### How You Know You're in a Ralph Loop
 
@@ -237,6 +324,44 @@ WHEN ALL TASKS DONE:
 3. Verify build succeeds
 4. Review all changes: git diff main
 5. Only then output completion phrase
+\`\`\`
+
+### Example: How to Think During Ralph Loop
+
+**Original prompt**: "Add CRUD endpoints for todos with validation"
+
+**Your approach**:
+\`\`\`
+Task breakdown:
+- [ ] GET /todos (list)
+- [ ] POST /todos (create with validation)
+- [ ] GET /todos/:id (single)
+- [ ] PUT /todos/:id (update with validation)
+- [ ] DELETE /todos/:id
+- [ ] Tests for all endpoints
+
+Starting with GET /todos...
+[implement]
+[test - passes]
+[commit: "feat(todos): add GET /todos endpoint"]
+[update session log]
+
+Moving to POST /todos...
+[implement]
+[test - fails: validation not working]
+[fix validation]
+[test - passes]
+[commit: "feat(todos): add POST /todos with validation"]
+[update session log]
+
+...continue until all done...
+
+Final verification:
+[npm test - all pass]
+[npm run lint - clean]
+[npm run build - succeeds]
+
+<promise>COMPLETE</promise>
 \`\`\`
 
 ### When to NOT Output Completion Phrase

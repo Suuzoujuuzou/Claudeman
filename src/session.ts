@@ -551,7 +551,13 @@ export class Session extends EventEmitter {
         cols: 120,
         rows: 40,
         cwd: this.workingDir,
-        env: { ...process.env, TERM: 'xterm-256color' },
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color',
+          // Inform Claude it's running within Claudeman (helps prevent self-termination)
+          CLAUDEMAN_SCREEN: '1',
+          CLAUDEMAN_SESSION_ID: this.id,
+        },
       });
     }
 
@@ -707,7 +713,12 @@ export class Session extends EventEmitter {
         cols: 120,
         rows: 40,
         cwd: this.workingDir,
-        env: { ...process.env, TERM: 'xterm-256color' },
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color',
+          CLAUDEMAN_SCREEN: '1',
+          CLAUDEMAN_SESSION_ID: this.id,
+        },
       });
     }
 
@@ -803,7 +814,13 @@ export class Session extends EventEmitter {
           cols: 120,
           rows: 40,
           cwd: this.workingDir,
-          env: { ...process.env, TERM: 'xterm-256color' },
+          env: {
+            ...process.env,
+            TERM: 'xterm-256color',
+            // Inform Claude it's running within Claudeman
+            CLAUDEMAN_SCREEN: '1',
+            CLAUDEMAN_SESSION_ID: this.id,
+          },
         });
 
         this._pid = this.ptyProcess.pid;
