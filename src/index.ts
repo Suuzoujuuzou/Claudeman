@@ -1,4 +1,12 @@
 #!/usr/bin/env node
+/**
+ * @fileoverview Claudeman CLI entry point
+ *
+ * This is the main executable entry point for the Claudeman CLI.
+ * It sets up global error handlers and invokes the CLI parser.
+ *
+ * @module index
+ */
 
 import { program } from './cli.js';
 

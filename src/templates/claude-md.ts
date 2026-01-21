@@ -1,5 +1,26 @@
+/**
+ * @fileoverview CLAUDE.md template generation
+ *
+ * Generates CLAUDE.md configuration files for new Claudeman projects.
+ * Supports custom templates with placeholder substitution.
+ *
+ * @module templates/claude-md
+ */
+
 import { existsSync, readFileSync } from 'node:fs';
 
+/**
+ * Generates a CLAUDE.md configuration file for a new project.
+ *
+ * Supports custom templates via `templatePath`. If provided and the file exists,
+ * placeholders ([PROJECT_NAME], [PROJECT_DESCRIPTION], [DATE]) are replaced.
+ * Falls back to the default template if custom template is unavailable.
+ *
+ * @param caseName - The project/case name to use in the template
+ * @param description - Optional project description (defaults to "A new project")
+ * @param templatePath - Optional path to a custom template file
+ * @returns The generated CLAUDE.md content
+ */
 export function generateClaudeMd(caseName: string, description: string = '', templatePath?: string): string {
   const date = new Date().toISOString().split('T')[0];
 

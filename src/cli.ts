@@ -1,3 +1,12 @@
+/**
+ * @fileoverview Claudeman CLI command definitions
+ *
+ * Defines all CLI commands and subcommands for managing Claude sessions,
+ * tasks, Ralph loops, and the web server.
+ *
+ * @module cli
+ */
+
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { getSessionManager } from './session-manager.js';

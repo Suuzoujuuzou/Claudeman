@@ -1,3 +1,15 @@
+/**
+ * @fileoverview Claudeman web server and REST API
+ *
+ * Provides a Fastify-based web server with:
+ * - REST API for session management, respawn control, and monitoring
+ * - Server-Sent Events (SSE) for real-time updates at /api/events
+ * - Static file serving for the web UI
+ * - 60fps terminal streaming with batched updates
+ *
+ * @module web/server
+ */
+
 import Fastify, { FastifyInstance, FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { join, dirname } from 'node:path';
