@@ -164,7 +164,8 @@ Each item has specific file:line references and expected impact estimates.
 9. **CSS Containment**: Added `contain` property to terminal container, session tabs, ralph panel, task panel, and modal content for paint isolation
 10. **GPU-Accelerated Animations**: Added `will-change` for animated elements, use transform-based transitions
 11. **Input Batching**: Batch rapid keystrokes at 60fps, immediate flush for control chars
-12. **Incremental DOM Updates**: Reuse existing DOM elements in Ralph todo list, ~80% fewer DOM ops
+12. **Incremental DOM Updates (Ralph)**: Reuse existing DOM elements in Ralph todo list, ~80% fewer DOM ops
+13. **Incremental DOM Updates (Tabs)**: Session tabs update only changed properties, ~70% fewer DOM ops
 
 ### Commits:
 - `df91823` - fix: improve memory safety and regex pattern handling
@@ -177,6 +178,7 @@ Each item has specific file:line references and expected impact estimates.
 - `26ab141` - docs: add WebUI optimization roadmap and session log
 - `3dd6ea5` - perf: add input batching for rapid keystrokes
 - `ab6f630` - perf: add incremental DOM updates for Ralph todo list
+- `af1ea57` - perf: add incremental updates for session tabs rendering
 
 ---
 
