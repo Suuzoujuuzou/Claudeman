@@ -42,6 +42,10 @@ npm run web                        # After npm run build (shorthand)
 node dist/index.js web             # After npm run build
 claudeman web                      # After npm link
 
+# Start TUI (terminal user interface):
+npx tsx src/index.ts tui           # Dev mode - full-screen TUI
+claudeman tui                      # After npm link
+
 # Testing (vitest)
 # Note: globals: true configured - no imports needed for describe/it/expect
 npm run test                              # Run all tests once
@@ -96,6 +100,8 @@ pkill -f "SCREEN.*claudeman"              # Force kill all claudeman screens
 | `src/state-store.ts` | JSON persistence to `~/.claudeman/` with debounced writes |
 | `src/web/server.ts` | Fastify REST API + SSE at `/api/events` |
 | `src/web/public/app.js` | Frontend: SSE handling, xterm.js, tab management |
+| `src/tui/App.tsx` | TUI main component: tabs, terminal viewport, status bar (Ink/React) |
+| `src/tui/hooks/useSessionManager.ts` | TUI session state, screen polling, input handling |
 | `src/types.ts` | All TypeScript interfaces |
 
 ### Data Flow

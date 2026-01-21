@@ -8,13 +8,14 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { existsSync, readFileSync, watchFile, unwatchFile } from 'fs';
+import { existsSync, readFileSync, writeFileSync, watchFile, unwatchFile, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import type { ScreenSession } from '../../types.js';
 
 const SCREENS_FILE = join(homedir(), '.claudeman', 'screens.json');
+const OUTPUT_POLL_INTERVAL = 500; // Poll terminal output every 500ms
 
 interface SessionManagerState {
   sessions: ScreenSession[];
@@ -101,6 +102,49 @@ export function useSessionManager(): SessionManagerState {
   // Get active session
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId) || null;
 
+  // Poll terminal output for active session
+  useEffect(() => {
+    if (!activeSessionId || !activeSession) return;
+
+    const pollOutput = () => {
+      if (!isScreenAlive(activeSession.screenName)) return;
+
+      try {
+        const hardcopyFile = `/tmp/claudeman-${activeSessionId}-hardcopy`;
+        execSync(`screen -S ${activeSession.screenName} -X hardcopy ${hardcopyFile}`, {
+          encoding: 'utf-8',
+          timeout: 1000,
+        });
+        if (existsSync(hardcopyFile)) {
+          const content = readFileSync(hardcopyFile, 'utf-8');
+          // Only update if content changed
+          if (content !== outputBufferRef.current) {
+            outputBufferRef.current = content;
+            setTerminalOutput(content);
+          }
+          // Clean up temp file
+          try {
+            unlinkSync(hardcopyFile);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      } catch {
+        // Hardcopy may fail, that's ok
+      }
+    };
+
+    // Initial poll
+    pollOutput();
+
+    // Set up polling interval
+    const intervalId = setInterval(pollOutput, OUTPUT_POLL_INTERVAL);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [activeSessionId, activeSession]);
+
   // Refresh sessions manually
   const refreshSessions = useCallback(() => {
     setSessions(loadSessions());
@@ -111,26 +155,8 @@ export function useSessionManager(): SessionManagerState {
     setActiveSessionId(sessionId);
     setTerminalOutput('');
     outputBufferRef.current = '';
-
-    // Start capturing output from the screen session
-    const session = sessions.find((s) => s.sessionId === sessionId);
-    if (session && isScreenAlive(session.screenName)) {
-      // Use screen -X hardcopy to capture current screen content
-      try {
-        const hardcopyFile = `/tmp/claudeman-${sessionId}-hardcopy`;
-        execSync(`screen -S ${session.screenName} -X hardcopy ${hardcopyFile}`, {
-          encoding: 'utf-8',
-        });
-        if (existsSync(hardcopyFile)) {
-          const content = readFileSync(hardcopyFile, 'utf-8');
-          setTerminalOutput(content);
-          outputBufferRef.current = content;
-        }
-      } catch {
-        // Hardcopy may fail, that's ok
-      }
-    }
-  }, [sessions]);
+    // Polling effect will handle fetching output
+  }, []);
 
   // Create new session
   const createSession = useCallback(async (): Promise<string | null> => {
