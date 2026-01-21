@@ -1347,11 +1347,23 @@ export class WebServer extends EventEmitter {
   }
 
   // Batch terminal data for better performance (60fps)
+  // Flushes immediately if batch > 1KB for snappier response to large outputs
   private batchTerminalData(sessionId: string, data: string): void {
     const existing = this.terminalBatches.get(sessionId) || '';
-    this.terminalBatches.set(sessionId, existing + data);
+    const newBatch = existing + data;
+    this.terminalBatches.set(sessionId, newBatch);
 
-    // Start batch timer if not already running
+    // Flush immediately if batch is large (>1KB) for responsiveness
+    if (newBatch.length > 1024) {
+      if (this.terminalBatchTimer) {
+        clearTimeout(this.terminalBatchTimer);
+        this.terminalBatchTimer = null;
+      }
+      this.flushTerminalBatches();
+      return;
+    }
+
+    // Start batch timer if not already running (16ms = 60fps)
     if (!this.terminalBatchTimer) {
       this.terminalBatchTimer = setTimeout(() => {
         this.flushTerminalBatches();
