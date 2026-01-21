@@ -184,7 +184,11 @@ class ClaudemanApp {
 
   showWelcome() {
     this.terminal.writeln('\x1b[1;36m  Claudeman Terminal\x1b[0m');
-    this.terminal.writeln('\x1b[90m  Click "Run Claude" or press Ctrl+Enter to begin\x1b[0m');
+    this.terminal.writeln('');
+    this.terminal.writeln('\x1b[90m  Each instance opens a persistent GNU Screen session running Claude or Shell.\x1b[0m');
+    this.terminal.writeln('\x1b[90m  Sessions stay alive for autonomous work, even if you close this browser.\x1b[0m');
+    this.terminal.writeln('');
+    this.terminal.writeln('\x1b[90m  Press \x1b[1;37mCtrl+Enter\x1b[0m\x1b[90m to start Claude  •  Click \x1b[1;37mRun Shell\x1b[0m\x1b[90m for a terminal\x1b[0m');
     this.terminal.writeln('');
   }
 
@@ -990,6 +994,19 @@ class ClaudemanApp {
     input.value = Math.max(1, current - 1);
   }
 
+  // Shell count stepper functions
+  incrementShellCount() {
+    const input = document.getElementById('shellCount');
+    const current = parseInt(input.value) || 1;
+    input.value = Math.min(20, current + 1);
+  }
+
+  decrementShellCount() {
+    const input = document.getElementById('shellCount');
+    const current = parseInt(input.value) || 1;
+    input.value = Math.max(1, current - 1);
+  }
+
   async runClaude() {
     const caseName = document.getElementById('quickStartCase').value || 'testcase';
     const tabCount = Math.min(20, Math.max(1, parseInt(document.getElementById('tabCount').value) || 1));
@@ -1084,9 +1101,10 @@ class ClaudemanApp {
 
   async runShell() {
     const caseName = document.getElementById('quickStartCase').value || 'testcase';
+    const shellCount = Math.min(20, Math.max(1, parseInt(document.getElementById('shellCount').value) || 1));
 
     this.terminal.clear();
-    this.terminal.writeln(`\x1b[1;33m Starting Shell in ${caseName}...\x1b[0m`);
+    this.terminal.writeln(`\x1b[1;33m Starting ${shellCount} Shell session(s) in ${caseName}...\x1b[0m`);
     this.terminal.writeln('');
 
     try {
@@ -1107,34 +1125,39 @@ class ClaudemanApp {
           }
         }
       }
-      const sessionName = `s${startNumber}-${caseName}`;
 
-      // Create session with shell mode
-      const createRes = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workingDir, mode: 'shell', name: sessionName })
-      });
-      const createData = await createRes.json();
-      if (!createData.success) throw new Error(createData.error);
+      // Create multiple shell sessions
+      for (let i = 0; i < shellCount; i++) {
+        const sessionName = `s${startNumber + i}-${caseName}`;
 
-      const sessionId = createData.session.id;
-
-      // Start shell
-      await fetch(`/api/sessions/${sessionId}/shell`, {
-        method: 'POST'
-      });
-
-      this.activeSessionId = sessionId;
-
-      // Send resize
-      const dims = this.fitAddon.proposeDimensions();
-      if (dims) {
-        await fetch(`/api/sessions/${sessionId}/resize`, {
+        // Create session with shell mode
+        const createRes = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
+          body: JSON.stringify({ workingDir, mode: 'shell', name: sessionName })
         });
+        const createData = await createRes.json();
+        if (!createData.success) throw new Error(createData.error);
+
+        const sessionId = createData.session.id;
+
+        // Start shell
+        await fetch(`/api/sessions/${sessionId}/shell`, {
+          method: 'POST'
+        });
+
+        // Set active to last created
+        this.activeSessionId = sessionId;
+
+        // Send resize
+        const dims = this.fitAddon.proposeDimensions();
+        if (dims) {
+          await fetch(`/api/sessions/${sessionId}/resize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cols: dims.cols, rows: dims.rows })
+          });
+        }
       }
 
       this.terminal.focus();
