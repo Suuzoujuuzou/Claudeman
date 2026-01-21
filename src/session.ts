@@ -295,6 +295,7 @@ export class Session extends EventEmitter {
   private _lineBufferFlushTimer: NodeJS.Timeout | null = null;
   private resolvePromise: ((value: { result: string; cost: number }) => void) | null = null;
   private rejectPromise: ((reason: Error) => void) | null = null;
+  private _promptResolved: boolean = false;  // Guard against race conditions in runPrompt
   private _isWorking: boolean = false;
   private _lastPromptTime: number = 0;
   private activityTimeout: NodeJS.Timeout | null = null;
@@ -896,6 +897,7 @@ export class Session extends EventEmitter {
       this._messages = [];
       this._lineBuffer = '';
       this._lastActivityAt = Date.now();
+      this._promptResolved = false;  // Reset race condition guard
 
       this.resolvePromise = resolve;
       this.rejectPromise = reject;
@@ -949,6 +951,19 @@ export class Session extends EventEmitter {
           this.ptyProcess = null;
           this._pid = null;
 
+          // Guard against race conditions: only process once per runPrompt call
+          if (this._promptResolved) {
+            this.emit('exit', exitCode);
+            return;
+          }
+          this._promptResolved = true;
+
+          // Capture callbacks atomically before processing
+          const resolve = this.resolvePromise;
+          const reject = this.rejectPromise;
+          this.resolvePromise = null;
+          this.rejectPromise = null;
+
           // Find result from parsed messages or use text output
           const resultMsg = this._messages.find(m => m.type === 'result');
 
@@ -957,23 +972,21 @@ export class Session extends EventEmitter {
             const cost = resultMsg.total_cost_usd || 0;
             this._totalCost += cost;
             this.emit('completion', resultMsg.result || '', cost);
-            if (this.resolvePromise) {
-              this.resolvePromise({ result: resultMsg.result || '', cost });
+            if (resolve) {
+              resolve({ result: resultMsg.result || '', cost });
             }
           } else if (exitCode !== 0 || (resultMsg && resultMsg.is_error)) {
             this._status = 'error';
-            if (this.rejectPromise) {
-              this.rejectPromise(new Error(this._errorBuffer || this._textOutput.value || 'Process exited with error'));
+            if (reject) {
+              reject(new Error(this._errorBuffer || this._textOutput.value || 'Process exited with error'));
             }
           } else {
             this._status = 'idle';
-            if (this.resolvePromise) {
-              this.resolvePromise({ result: this._textOutput.value || this._terminalBuffer.value, cost: this._totalCost });
+            if (resolve) {
+              resolve({ result: this._textOutput.value || this._terminalBuffer.value, cost: this._totalCost });
             }
           }
 
-          this.resolvePromise = null;
-          this.rejectPromise = null;
           this.emit('exit', exitCode);
         });
 
