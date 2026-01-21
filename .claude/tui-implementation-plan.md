@@ -35,10 +35,10 @@ Build a full terminal user interface (TUI) for Claudeman that mirrors the web in
 
 | File | Status | Notes |
 |------|--------|-------|
-| `src/tui/components/RalphPanel.tsx` | ❌ Pending | Inner loop/todo tracking panel |
-| `src/tui/hooks/useTerminal.ts` | ❌ Pending | Terminal output handling hook |
-| `src/tui/hooks/useKeyboard.ts` | ❌ Pending | Global keyboard shortcuts hook |
-| `src/tui/store/tui-state.ts` | ❌ Pending | TUI-specific state management |
+| `src/tui/components/RalphPanel.tsx` | ✅ Done | Inner loop/todo tracking panel |
+| `src/tui/hooks/useTerminal.ts` | ⏭️ Skipped | Functionality merged into useSessionManager |
+| `src/tui/hooks/useKeyboard.ts` | ⏭️ Skipped | Using Ink's useInput directly |
+| `src/tui/store/tui-state.ts` | ⏭️ Skipped | Using React hooks instead |
 
 ### Phase Completion
 
@@ -47,8 +47,8 @@ Build a full terminal user interface (TUI) for Claudeman that mirrors the web in
 - [x] **Phase 3**: Tab System
 - [x] **Phase 4**: Terminal Display (basic)
 - [x] **Phase 5**: Status Bar
-- [ ] **Phase 6**: Session Management (partial - create/kill works)
-- [ ] **Phase 7**: Advanced Features (Ralph panel, respawn banner)
+- [x] **Phase 6**: Session Management (create/kill/attach)
+- [x] **Phase 7**: Advanced Features (Ralph panel, respawn banner)
 
 ### Usage
 
