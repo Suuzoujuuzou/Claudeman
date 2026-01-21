@@ -133,17 +133,37 @@ Each item has specific file:line references and expected impact estimates.
 | Item | Status | Completed By | Notes |
 |------|--------|--------------|-------|
 | 1 | ✅ Done | Claude | BufferAccumulator in session.ts, respawn-controller.ts |
-| 2 | ✅ Done | Claude | Already had lastIndex resets in place |
+| 2 | ✅ Done | Claude | Fixed lastIndex resets - now reset BEFORE .test() calls |
 | 3 | ✅ Done | Claude | BufferAccumulator auto-trims, no manual limits needed |
-| 4 | ☐ Pending | | |
+| 4 | ✅ Done | Claude | cleanupTrackerListeners() stores/removes handlers; event debouncing in InnerLoopTracker |
 | 5 | ☐ Pending | | |
-| 6 | ☐ Pending | | |
+| 6 | ✅ Done | Claude | Pre-checks before regex (hasCheckbox, hasTodoIndicator, etc.) - 60-75% reduction |
 | 7 | ✅ Done | Claude | Immediate flush for >1KB batches |
 | 8 | ☐ Pending | | |
 | 9 | ✅ Done | Claude | Removed ANSI_ESCAPE_PATTERN, WHITESPACE_PATTERN |
-| 10 | ☐ Pending | | |
+| 10 | ✅ Done | Claude | broadcastSessionStateDebounced() batches state updates at 500ms intervals |
 | 11 | ☐ Pending | | |
 | 12 | ☐ Pending | | |
 | 13 | ☐ Pending | | Not unused - used by CLI |
 | 14 | ☐ Pending | | |
 | 15 | ☐ Pending | | |
+
+---
+
+## Session Log (2026-01-21)
+
+### Completed This Session:
+1. **Regex lastIndex Fix** (#2): Moved lastIndex resets to BEFORE .test() calls in inner-loop-tracker.ts
+2. **Event Listener Cleanup** (#4): Added `cleanupTrackerListeners()` in session.ts to properly remove TaskTracker and InnerLoopTracker listeners
+3. **Event Debouncing** (#4): Added 50ms debouncing for todoUpdate/loopUpdate events in InnerLoopTracker
+4. **Regex Pre-checks** (#6): Added fast pre-checks (string.includes) before expensive regex execution
+5. **Promise Race Condition Fix**: Added `_promptResolved` flag in session.ts to prevent double resolution
+6. **State Update Debouncing** (#10): Added `broadcastSessionStateDebounced()` in server.ts batching at 500ms intervals
+7. **withTimeout Utility**: Added exported utility for async operation protection with configurable timeouts
+
+### Commits:
+- `df91823` - fix: improve memory safety and regex pattern handling
+- `08b76cd` - perf: add event debouncing to InnerLoopTracker
+- `645f86e` - perf: optimize regex execution and fix promise race condition
+- `1a7c6d3` - fix: prevent memory leaks from orphaned event listeners
+- `2709d43` - perf: add session state update debouncing in server
