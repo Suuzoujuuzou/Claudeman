@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="docs/screenshots/logo.png" alt="Claudeman" width="120" />
-</p>
-
-<h1 align="center">Claudeman</h1>
+<h1 align="center">🤖 Claudeman</h1>
 
 <p align="center">
   <strong>The missing control plane for Claude Code.</strong><br>

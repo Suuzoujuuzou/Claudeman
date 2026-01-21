@@ -138,7 +138,7 @@ Each item has specific file:line references and expected impact estimates.
 | 4 | ☐ Pending | | |
 | 5 | ☐ Pending | | |
 | 6 | ☐ Pending | | |
-| 7 | ☐ Pending | | |
+| 7 | ✅ Done | Claude | Immediate flush for >1KB batches |
 | 8 | ☐ Pending | | |
 | 9 | ✅ Done | Claude | Removed ANSI_ESCAPE_PATTERN, WHITESPACE_PATTERN |
 | 10 | ☐ Pending | | |
