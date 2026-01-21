@@ -3,11 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-195%20passing-success)](./test)
+[![Tests](https://img.shields.io/badge/tests-196%20passing-success)](./test)
 
-**A powerful Claude Code session manager with autonomous Ralph Loop for long-running AI tasks**
+**Take full control of your Claude Code sessions like never before.**
 
-Claudeman transforms Claude Code into an autonomous development powerhouse. Spawn multiple Claude CLI sessions, run them for hours with automatic context management, and let the Ralph Loop keep your AI assistant productive around the clock.
+Claudeman is the ultimate session manager for Claude Code power users. Spawn up to 20 parallel Claude CLI sessions, run them autonomously for 24+ hours, and never lose work thanks to persistent GNU Screen sessions. Whether you're running overnight code reviews, parallel feature development, or time-boxed sprints - Claudeman keeps your AI assistant productive while you sleep.
+
+> 🎯 **Perfect for**: Autonomous coding sprints, overnight refactors, parallel development, long-running code reviews, time-boxed AI tasks
 
 ---
 
@@ -38,14 +40,17 @@ Claudeman transforms Claude Code into an autonomous development powerhouse. Spaw
 
 | Feature | Description |
 |---------|-------------|
-| **Web Interface** | Beautiful terminal UI with xterm.js, 60fps rendering, multi-tab sessions |
-| **Ralph Loop** | Autonomous control loop that keeps Claude working continuously |
+| **Up to 20 Parallel Sessions** | Spawn multiple Claude CLI sessions with full terminal access |
+| **Session Persistence** | GNU Screen sessions survive server restarts - never lose work |
+| **Screen-Aware Sessions** | Claude sessions know they're in Claudeman via `CLAUDEMAN_SCREEN` env var |
+| **Ralph Loop** | Autonomous control loop that keeps Claude working 24+ hours |
 | **Time-Aware Sessions** | Run Claude for specific durations ("work for 8 hours") |
-| **Auto Context** | Automatic `/clear` and `/compact` when tokens get high |
-| **Real-time Monitoring** | Track tokens, costs, memory, background tasks |
-| **Session Persistence** | Screen sessions survive server restarts |
-| **Inner Loop Tracking** | Detect Ralph loops running inside Claude Code |
-| **Screen Manager TUI** | Interactive terminal tool for managing screen sessions |
+| **Auto Context Management** | Automatic `/clear` and `/compact` when tokens get high |
+| **Memory Management** | 5MB terminal buffers with automatic trimming for long sessions |
+| **Real-time Monitoring** | Track tokens, costs, memory, CPU, and background tasks |
+| **Inner Loop Tracking** | Detect Ralph loops and todos running inside Claude Code |
+| **Screen Manager TUI** | Interactive bash tool for managing screen sessions |
+| **60fps Rendering** | Smooth terminal streaming with batched updates |
 
 ---
 
@@ -96,10 +101,23 @@ claudeman web
 ## Features
 
 ### Session Management
-- Spawn multiple Claude CLI sessions as PTY subprocesses
+- Spawn up to 20 parallel Claude CLI sessions as PTY subprocesses
 - Full terminal access with resize support and buffer persistence
 - One-click kill for individual sessions or all at once
-- Session restoration after server restarts via GNU screen
+- Session restoration after server restarts via GNU Screen
+- **Screen-aware sessions**: Claude knows it's running in Claudeman via environment variables
+
+### Screen-Aware Sessions
+
+Every Claude session spawned by Claudeman receives special environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `CLAUDEMAN_SCREEN=1` | Indicates running within Claudeman |
+| `CLAUDEMAN_SESSION_ID` | The session's unique identifier |
+| `CLAUDEMAN_SCREEN_NAME` | The GNU Screen session name |
+
+This helps prevent Claude from accidentally terminating its own screen session and allows sessions to be aware of their managed environment.
 
 ### Autonomous Operation
 - **Respawn Controller**: State machine that cycles sessions (update → /clear → /init)
@@ -364,9 +382,10 @@ curl -X POST localhost:3000/api/sessions/:id/auto-clear \
 
 ### Multi-Tab Sessions
 
-1. Set the number (1-10) in the tab count stepper
+1. Set the number (1-20) in the tab count stepper
 2. Click "Run Claude"
-3. Sessions named `1-projectname`, `2-projectname`, etc.
+3. Sessions named `w1-projectname`, `w2-projectname`, etc.
+4. Tabs wrap nicely into multiple rows for easy navigation
 
 ### Monitor Panel
 
@@ -506,23 +525,36 @@ Requires `jq` and `screen` packages.
 
 ## Long-Running Sessions
 
-Optimized for 12-24+ hour autonomous sessions.
+Optimized for 12-24+ hour autonomous sessions with intelligent memory management.
 
 ### Buffer Limits
 
-| Buffer | Max Size | Trim To |
-|--------|----------|---------|
-| Terminal | 5MB | 4MB |
-| Text output | 2MB | 1.5MB |
-| Messages | 1000 | 800 |
-| Line buffer | 64KB | flush 100ms |
+Automatic trimming prevents memory exhaustion during long sessions:
+
+| Buffer | Max Size | Trim To | Purpose |
+|--------|----------|---------|---------|
+| Terminal | 5MB | 4MB | Raw PTY output with ANSI codes |
+| Text output | 2MB | 1.5MB | ANSI-stripped text for processing |
+| Messages | 1000 | 800 | Parsed Claude JSON messages |
+| Line buffer | 64KB | flush 100ms | Line-by-line processing buffer |
+| Respawn buffer | 1MB | 512KB | Terminal data for respawn controller |
+
+### Memory Management
+
+Claudeman is designed for stability during extended sessions:
+
+- **Automatic buffer trimming**: Keeps the most recent data when limits exceeded
+- **Debounced state saves**: 500ms batching prevents disk I/O storms
+- **Process cleanup**: Aggressive cleanup of orphaned screen sessions
+- **Event listener tracking**: Prevents memory leaks from unremoved listeners
+- **Separate state files**: Inner loop state in separate file to reduce write frequency
 
 ### Performance
 
-- Server batching at 60fps (16ms)
-- Client requestAnimationFrame batching
-- Debounced state saves (500ms)
-- Aggressive process cleanup
+- Server batching at 60fps (16ms) for smooth terminal streaming
+- Client `requestAnimationFrame` batching for smooth rendering
+- Pre-compiled regex patterns (avoid recompilation in hot loops)
+- Child process resource monitoring with color-coded warnings
 
 ### Best Practices
 
@@ -591,7 +623,7 @@ A: 24+ hours. Buffer management keeps memory stable.
 A: Yes! Claudeman spawns real Claude CLI processes.
 
 **Q: Can I run multiple sessions?**
-A: Yes, up to 50 concurrent sessions.
+A: Yes, the web UI supports up to 20 concurrent sessions per case. The API supports up to 50.
 
 **Q: What if the server restarts?**
 A: Screen sessions persist and auto-restore.
