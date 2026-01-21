@@ -1,3 +1,20 @@
+/**
+ * @fileoverview Core PTY session wrapper for Claude CLI interactions.
+ *
+ * This module provides the Session class which manages a PTY (pseudo-terminal)
+ * process running the Claude CLI. It supports three operation modes:
+ *
+ * 1. **One-shot mode** (`runPrompt`): Execute a single prompt and get JSON response
+ * 2. **Interactive mode** (`startInteractive`): Start an interactive Claude session
+ * 3. **Shell mode**: Run a plain bash shell for debugging/testing
+ *
+ * The session can optionally run inside a GNU Screen session for persistence
+ * across disconnects. It tracks tokens, costs, background tasks, and supports
+ * auto-clear/auto-compact functionality when token limits are approached.
+ *
+ * @module session
+ */
+
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import * as pty from 'node-pty';
@@ -10,18 +27,29 @@ import { ScreenManager } from './screen-manager.js';
 export type { BackgroundTask } from './task-tracker.js';
 export type { InnerLoopState, InnerTodoItem } from './types.js';
 
-// Maximum terminal buffer size in characters (default 5MB of text)
+// ============================================================================
+// Buffer Size Constants
+// ============================================================================
+
+/** Maximum terminal buffer size in characters (5MB) */
 const MAX_TERMINAL_BUFFER_SIZE = 5 * 1024 * 1024;
-// When trimming, keep the most recent portion (4MB)
+
+/** When trimming terminal buffer, keep the most recent portion (4MB) */
 const TERMINAL_BUFFER_TRIM_SIZE = 4 * 1024 * 1024;
-// Maximum text output buffer size (2MB)
+
+/** Maximum text output buffer size (2MB) - ANSI-stripped text */
 const MAX_TEXT_OUTPUT_SIZE = 2 * 1024 * 1024;
+
+/** When trimming text output, keep the most recent portion (1.5MB) */
 const TEXT_OUTPUT_TRIM_SIZE = 1.5 * 1024 * 1024;
-// Maximum number of Claude messages to keep in memory
+
+/** Maximum number of Claude JSON messages to keep in memory */
 const MAX_MESSAGES = 1000;
-// Maximum line buffer size (64KB) - prevents unbounded growth for long lines
+
+/** Maximum line buffer size (64KB) - prevents unbounded growth for long lines */
 const MAX_LINE_BUFFER_SIZE = 64 * 1024;
-// Line buffer flush interval (100ms) - forces processing of partial lines
+
+/** Line buffer flush interval (100ms) - forces processing of partial lines */
 const LINE_BUFFER_FLUSH_INTERVAL = 100;
 
 // Filter out terminal focus escape sequences (focus in/out reports)
@@ -32,10 +60,18 @@ const FOCUS_ESCAPE_FILTER = /\x1b\[\?1004[hl]|\x1b\[[IO]/g;
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
 const TOKEN_PATTERN = /(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens/;
 
+/**
+ * Represents a JSON message from Claude CLI's stream-json output format.
+ * Messages are newline-delimited JSON objects parsed from PTY output.
+ */
 export interface ClaudeMessage {
+  /** Message type indicating the role or purpose */
   type: 'system' | 'assistant' | 'user' | 'result';
+  /** Optional subtype for further classification */
   subtype?: string;
+  /** Claude's internal session identifier */
   session_id?: string;
+  /** Message content with optional token usage */
   message?: {
     content: Array<{ type: string; text?: string }>;
     usage?: {
@@ -43,37 +79,93 @@ export interface ClaudeMessage {
       output_tokens: number;
     };
   };
+  /** Final result text (on result messages) */
   result?: string;
+  /** Whether this message represents an error */
   is_error?: boolean;
+  /** Total cost in USD (on result messages) */
   total_cost_usd?: number;
+  /** Total duration in milliseconds (on result messages) */
   duration_ms?: number;
 }
 
+/**
+ * Event signatures emitted by the Session class.
+ * Subscribe using `session.on('eventName', handler)`.
+ */
 export interface SessionEvents {
+  /** Processed text output (ANSI stripped) */
   output: (data: string) => void;
+  /** Parsed JSON message from Claude CLI */
   message: (msg: ClaudeMessage) => void;
+  /** Error output from the session */
   error: (data: string) => void;
+  /** Session process exited */
   exit: (code: number | null) => void;
+  /** One-shot prompt completed with result and cost */
   completion: (result: string, cost: number) => void;
-  terminal: (data: string) => void;  // Raw terminal data
-  clearTerminal: () => void;  // Signal client to clear terminal (after screen attach)
-  // Background task events
+  /** Raw terminal data (includes ANSI codes) */
+  terminal: (data: string) => void;
+  /** Signal to clear terminal display (after screen attach) */
+  clearTerminal: () => void;
+  /** New background task started */
   taskCreated: (task: BackgroundTask) => void;
+  /** Background task status changed */
   taskUpdated: (task: BackgroundTask) => void;
+  /** Background task finished successfully */
   taskCompleted: (task: BackgroundTask) => void;
+  /** Background task failed with error */
   taskFailed: (task: BackgroundTask, error: string) => void;
-  // Auto-clear event
+  /** Auto-clear triggered due to token threshold */
   autoClear: (data: { tokens: number; threshold: number }) => void;
-  // Auto-compact event
+  /** Auto-compact triggered due to token threshold */
   autoCompact: (data: { tokens: number; threshold: number; prompt?: string }) => void;
-  // Inner loop tracking events (Claude Code running inside this session)
+  /** Inner loop (Ralph Wiggum) state changed */
   innerLoopUpdate: (state: InnerLoopState) => void;
+  /** Inner loop todo list updated */
   innerTodoUpdate: (todos: InnerTodoItem[]) => void;
+  /** Inner loop completion phrase detected */
   innerCompletionDetected: (phrase: string) => void;
 }
 
+/**
+ * Session operation mode.
+ * - `'claude'`: Runs Claude CLI for AI interactions (default)
+ * - `'shell'`: Runs a plain bash shell for debugging/testing
+ */
 export type SessionMode = 'claude' | 'shell';
 
+/**
+ * Core session class that wraps a PTY process running Claude CLI or a shell.
+ *
+ * @example
+ * ```typescript
+ * // Create and start an interactive Claude session
+ * const session = new Session({
+ *   workingDir: '/path/to/project',
+ *   screenManager: screenManager,
+ *   useScreen: true
+ * });
+ * await session.startInteractive();
+ *
+ * // Listen for events
+ * session.on('terminal', (data) => console.log(data));
+ * session.on('message', (msg) => console.log('Claude:', msg));
+ *
+ * // Send input
+ * session.write('Hello Claude!\r');
+ *
+ * // Stop when done
+ * await session.stop();
+ * ```
+ *
+ * @fires Session#terminal - Raw terminal output
+ * @fires Session#message - Parsed Claude JSON message
+ * @fires Session#completion - One-shot prompt completed
+ * @fires Session#exit - Process exited
+ * @fires Session#autoClear - Token threshold reached, clearing context
+ * @fires Session#autoCompact - Token threshold reached, compacting context
+ */
 export class Session extends EventEmitter {
   readonly id: string;
   readonly workingDir: string;
@@ -364,7 +456,23 @@ export class Session extends EventEmitter {
     };
   }
 
-  // Start an interactive Claude Code session (full terminal)
+  /**
+   * Starts an interactive Claude CLI session with full terminal support.
+   *
+   * This spawns Claude CLI with `--dangerously-skip-permissions` flag in
+   * interactive mode. If screen wrapping is enabled, the session runs inside
+   * a GNU Screen session for persistence across disconnects.
+   *
+   * @throws {Error} If a process is already running in this session
+   *
+   * @example
+   * ```typescript
+   * const session = new Session({ workingDir: '/project', useScreen: true });
+   * await session.startInteractive();
+   * session.on('terminal', (data) => process.stdout.write(data));
+   * session.write('help me with this code\r');
+   * ```
+   */
   async startInteractive(): Promise<void> {
     if (this.ptyProcess) {
       throw new Error('Session already has a running process');
@@ -515,7 +623,21 @@ export class Session extends EventEmitter {
     });
   }
 
-  // Start a plain shell session (bash/zsh without Claude)
+  /**
+   * Starts a plain shell session (bash/zsh) without Claude CLI.
+   *
+   * Useful for debugging, testing, or when you just need a terminal.
+   * Uses the user's default shell from $SHELL or falls back to /bin/bash.
+   *
+   * @throws {Error} If a process is already running in this session
+   *
+   * @example
+   * ```typescript
+   * const session = new Session({ workingDir: '/project', mode: 'shell' });
+   * await session.startShell();
+   * session.write('ls -la\r');
+   * ```
+   */
   async startShell(): Promise<void> {
     if (this.ptyProcess) {
       throw new Error('Session already has a running process');
@@ -629,6 +751,25 @@ export class Session extends EventEmitter {
     }, 500);
   }
 
+  /**
+   * Runs a one-shot prompt and returns the result.
+   *
+   * This spawns Claude CLI with `--output-format stream-json` to get
+   * structured JSON output. The promise resolves when Claude completes
+   * the response.
+   *
+   * @param prompt - The prompt text to send to Claude
+   * @returns Promise resolving to the result text and total cost in USD
+   * @throws {Error} If a process is already running in this session
+   *
+   * @example
+   * ```typescript
+   * const session = new Session({ workingDir: '/project' });
+   * const { result, cost } = await session.runPrompt('Explain this code');
+   * console.log(`Response: ${result}`);
+   * console.log(`Cost: $${cost.toFixed(4)}`);
+   * ```
+   */
   async runPrompt(prompt: string): Promise<{ result: string; cost: number }> {
     return new Promise((resolve, reject) => {
       if (this.ptyProcess) {
@@ -930,15 +1071,43 @@ export class Session extends EventEmitter {
     }
   }
 
-  // Send input to the PTY (for interactive sessions)
+  /**
+   * Sends input directly to the PTY process.
+   *
+   * For interactive sessions, this is how you send user input to Claude.
+   * Remember to include `\r` (carriage return) to simulate pressing Enter.
+   *
+   * @param data - The input data to send (text, escape sequences, etc.)
+   *
+   * @example
+   * ```typescript
+   * session.write('hello world');  // Text only, no Enter
+   * session.write('\r');           // Enter key
+   * session.write('ls -la\r');     // Command with Enter
+   * ```
+   */
   write(data: string): void {
     if (this.ptyProcess) {
       this.ptyProcess.write(data);
     }
   }
 
-  // Send input via screen -X stuff (for programmatic input like respawn controller)
-  // This bypasses PTY and sends directly to screen, more reliable for Enter key
+  /**
+   * Sends input via GNU Screen's `screen -X stuff` command.
+   *
+   * More reliable than direct PTY write for programmatic input, especially
+   * with Claude CLI which uses Ink (React for terminals). Text and Enter
+   * are sent as separate commands internally.
+   *
+   * @param data - Input data with optional `\r` for Enter
+   * @returns true if input was sent, false if no screen session or PTY
+   *
+   * @example
+   * ```typescript
+   * session.writeViaScreen('/clear\r');  // Send /clear command
+   * session.writeViaScreen('/init\r');   // Send /init command
+   * ```
+   */
   writeViaScreen(data: string): boolean {
     if (this._screenManager && this._screenSession) {
       return this._screenManager.sendInput(this.id, data);
@@ -951,7 +1120,14 @@ export class Session extends EventEmitter {
     return false;
   }
 
-  // Resize the PTY
+  /**
+   * Resizes the PTY terminal dimensions.
+   *
+   * Call this when the frontend terminal is resized to keep PTY in sync.
+   *
+   * @param cols - Number of columns (width in characters)
+   * @param rows - Number of rows (height in lines)
+   */
   resize(cols: number, rows: number): void {
     if (this.ptyProcess) {
       this.ptyProcess.resize(cols, rows);
@@ -972,6 +1148,23 @@ export class Session extends EventEmitter {
     });
   }
 
+  /**
+   * Stops the session and cleans up resources.
+   *
+   * This kills the PTY process and optionally the associated GNU Screen
+   * session. All buffers are cleared and the session is marked as stopped.
+   *
+   * @param killScreen - Whether to also kill the screen session (default: true)
+   *
+   * @example
+   * ```typescript
+   * // Stop and kill everything
+   * await session.stop();
+   *
+   * // Stop but keep screen running for later reattachment
+   * await session.stop(false);
+   * ```
+   */
   async stop(killScreen: boolean = true): Promise<void> {
     // Clear activity timeout to prevent memory leak
     if (this.activityTimeout) {

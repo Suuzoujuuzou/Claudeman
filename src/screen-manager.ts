@@ -1,3 +1,19 @@
+/**
+ * @fileoverview GNU Screen session manager for persistent Claude sessions.
+ *
+ * This module provides the ScreenManager class which creates and manages
+ * GNU Screen sessions that wrap Claude CLI processes. Screen provides:
+ *
+ * - **Persistence**: Sessions survive server restarts and disconnects
+ * - **Ghost recovery**: Orphaned screens are discovered and reattached on startup
+ * - **Resource tracking**: Memory, CPU, and child process stats per session
+ * - **Reliable input**: `screen -X stuff` bypasses PTY for programmatic commands
+ *
+ * Screen sessions are named `claudeman-{sessionId}` and stored in ~/.claudeman/screens.json.
+ *
+ * @module screen-manager
+ */
+
 import { EventEmitter } from 'node:events';
 import { spawn, execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -5,11 +21,36 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { ScreenSession, ProcessStats, ScreenSessionWithStats } from './types.js';
 
+/** Path to persisted screen session metadata */
 const SCREENS_FILE = join(homedir(), '.claudeman', 'screens.json');
 
-// Pre-compiled regex for screen list parsing
+/** Pre-compiled regex for parsing `screen -ls` output */
 const SCREEN_PATTERN = /(\d+)\.(claudeman-([a-f0-9-]+))/g;
 
+/**
+ * Manages GNU Screen sessions that wrap Claude CLI or shell processes.
+ *
+ * The ScreenManager maintains a registry of screen sessions, creates new ones,
+ * kills them using a 4-strategy approach, and discovers orphaned "ghost" screens
+ * from previous runs.
+ *
+ * @example
+ * ```typescript
+ * const manager = new ScreenManager();
+ *
+ * // Create a screen session for Claude
+ * const screen = await manager.createScreen(sessionId, '/project', 'claude');
+ *
+ * // Send input to the screen
+ * manager.sendInput(sessionId, '/clear\r');
+ *
+ * // Kill when done
+ * await manager.killScreen(sessionId);
+ * ```
+ *
+ * @fires ScreenManager#screenCreated - New screen session created
+ * @fires ScreenManager#screenKilled - Screen session terminated
+ */
 export class ScreenManager extends EventEmitter {
   private screens: Map<string, ScreenSession> = new Map();
   private statsInterval: NodeJS.Timeout | null = null;
@@ -50,7 +91,19 @@ export class ScreenManager extends EventEmitter {
     }
   }
 
-  // Create a new GNU screen session
+  /**
+   * Creates a new GNU Screen session wrapping Claude CLI or a shell.
+   *
+   * The screen is created in detached mode and automatically starts the
+   * appropriate command based on the mode parameter.
+   *
+   * @param sessionId - Unique session identifier (used in screen name)
+   * @param workingDir - Working directory for the screen session
+   * @param mode - 'claude' for Claude CLI or 'shell' for bash
+   * @param name - Optional display name for the session
+   * @returns The created screen session metadata
+   * @throws {Error} If screen creation fails
+   */
   async createScreen(sessionId: string, workingDir: string, mode: 'claude' | 'shell', name?: string): Promise<ScreenSession> {
     const screenName = `claudeman-${sessionId.slice(0, 8)}`;
 

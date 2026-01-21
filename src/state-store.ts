@@ -1,11 +1,48 @@
+/**
+ * @fileoverview Persistent JSON state storage for Claudeman.
+ *
+ * This module provides the StateStore class which persists application state
+ * to `~/.claudeman/state.json` with debounced writes to prevent excessive disk I/O.
+ *
+ * State is split into two files:
+ * - `state.json`: Main app state (sessions, tasks, config)
+ * - `state-inner.json`: Inner loop state (todos, Ralph loop state per session)
+ *
+ * The separation reduces write frequency since inner loop state changes rapidly
+ * during Ralph Wiggum loops.
+ *
+ * @module state-store
+ */
+
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { AppState, createInitialState, InnerSessionState, createInitialInnerSessionState } from './types.js';
 
-// Debounce delay for batching state writes (ms)
+/** Debounce delay for batching state writes (ms) */
 const SAVE_DEBOUNCE_MS = 500;
 
+/**
+ * Persistent JSON state storage with debounced writes.
+ *
+ * State is automatically loaded on construction and saved with 500ms
+ * debouncing to batch rapid updates into single disk writes.
+ *
+ * @example
+ * ```typescript
+ * const store = new StateStore();
+ *
+ * // Read state
+ * const sessions = store.getState().sessions;
+ *
+ * // Modify and save
+ * store.getState().sessions[id] = sessionState;
+ * store.save();  // Debounced - won't write immediately
+ *
+ * // Force immediate write
+ * store.saveNow();
+ * ```
+ */
 export class StateStore {
   private state: AppState;
   private filePath: string;
