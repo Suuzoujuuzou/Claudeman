@@ -132,18 +132,18 @@ Each item has specific file:line references and expected impact estimates.
 
 | Item | Status | Completed By | Notes |
 |------|--------|--------------|-------|
-| 1 | ☐ Pending | | |
-| 2 | ☐ Pending | | |
-| 3 | ☐ Pending | | |
+| 1 | ✅ Done | Claude | BufferAccumulator in session.ts, respawn-controller.ts |
+| 2 | ✅ Done | Claude | Already had lastIndex resets in place |
+| 3 | ✅ Done | Claude | BufferAccumulator auto-trims, no manual limits needed |
 | 4 | ☐ Pending | | |
 | 5 | ☐ Pending | | |
 | 6 | ☐ Pending | | |
 | 7 | ☐ Pending | | |
 | 8 | ☐ Pending | | |
-| 9 | ☐ Pending | | |
+| 9 | ✅ Done | Claude | Removed ANSI_ESCAPE_PATTERN, WHITESPACE_PATTERN |
 | 10 | ☐ Pending | | |
 | 11 | ☐ Pending | | |
 | 12 | ☐ Pending | | |
-| 13 | ☐ Pending | | |
+| 13 | ☐ Pending | | Not unused - used by CLI |
 | 14 | ☐ Pending | | |
 | 15 | ☐ Pending | | |

@@ -43,20 +43,7 @@ const MAX_RESPAWN_BUFFER_SIZE = 1024 * 1024; // 1MB
  */
 const RESPAWN_BUFFER_TRIM_SIZE = 512 * 1024; // 512KB
 
-// ========== Pre-compiled Regex Patterns ==========
-
-/**
- * Matches ANSI escape codes for terminal control sequences.
- * Used to strip formatting before pattern matching.
- * @deprecated Currently unused but kept for potential future use
- */
-const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[HJKmsu?lh]/g;
-
-/**
- * Matches whitespace sequences for normalization.
- * @deprecated Currently unused but kept for potential future use
- */
-const WHITESPACE_PATTERN = /\s+/g;
+// ========== Constants ==========
 
 /**
  * The definitive "ready for input" indicator.
