@@ -79,17 +79,7 @@ curl -X POST localhost:3000/api/sessions/:id/respawn/enable \
 Claudeman detects and tracks Ralph loops running inside Claude Code:
 
 <p align="center">
-  <img src="docs/images/ralph-tracker-8tasks-complete.png" alt="Ralph Loop Tracking - Complete" width="800">
-</p>
-
-<p align="center">
-  <em>Real-time tracking: 9 tasks completed in 2 minutes with completion phrase detection</em>
-</p>
-
-**In-Progress Tracking:**
-
-<p align="center">
-  <img src="docs/images/ralph-tracker-8tasks-44percent.png" alt="Ralph Loop Tracking - In Progress" width="800">
+  <img src="docs/images/ralph-tracker-8tasks-44percent.png" alt="Ralph Loop Tracking" width="800">
 </p>
 
 **Auto-detects:**
@@ -135,7 +125,13 @@ Run **20 parallel sessions** with full visibility:
 - One-click session management
 
 <p align="center">
-  <img src="docs/screenshots/session-running.png" alt="Session Running" width="800">
+  <img src="docs/screenshots/multi-session-dashboard.png" alt="Multi-Session Dashboard" width="800">
+</p>
+
+**Monitor Panel** — Real-time screen session monitoring with memory, CPU, and process info:
+
+<p align="center">
+  <img src="docs/screenshots/multi-session-monitor.png" alt="Monitor Panel" width="800">
 </p>
 
 ---
