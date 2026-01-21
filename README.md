@@ -265,9 +265,44 @@ claudeman web [-p 8080]             # Start web interface
 claudeman status                    # Show overall status
 ```
 
-### Screen Manager TUI
+### Terminal User Interface (TUI)
 
-Interactive terminal UI for direct screen management:
+Full-featured TUI built with Ink (React for CLI):
+
+```bash
+claudeman tui                       # Launch TUI
+npx tsx src/index.ts tui           # Dev mode
+```
+
+**Start Screen:**
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` | Navigate sessions |
+| `Enter` | View session in TUI |
+| `a` | Attach directly to screen |
+| `d` | Delete session |
+| `n` | New session |
+| `r` | Refresh |
+| `q` | Quit |
+
+**Main View:**
+| Key | Action |
+|-----|--------|
+| `Ctrl+Tab` | Next session |
+| `Ctrl+1-9` | Go to session N |
+| `Ctrl+W` | Close session |
+| `Escape` | Back to start screen |
+| `?` | Show help |
+
+Features:
+- Real-time terminal output (polls screen every 500ms)
+- Tab-based session navigation
+- Direct screen attachment for full interactivity
+- Arrow key navigation with visual selection
+
+### Screen Manager Script
+
+Interactive bash script for direct screen management:
 
 ```bash
 ./scripts/screen-manager.sh         # Launch interactive mode
