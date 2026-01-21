@@ -15,6 +15,7 @@ import type { ScreenSession } from '../../types.js';
 
 interface StatusBarProps {
   session: ScreenSession | null;
+  inputMode?: boolean;
 }
 
 /**
@@ -37,7 +38,7 @@ function formatDuration(ms: number): string {
 /**
  * StatusBar component showing session information
  */
-export function StatusBar({ session }: StatusBarProps): React.ReactElement {
+export function StatusBar({ session, inputMode = false }: StatusBarProps): React.ReactElement {
   if (!session) {
     return (
       <Box
@@ -55,6 +56,7 @@ export function StatusBar({ session }: StatusBarProps): React.ReactElement {
   const runtime = formatDuration(Date.now() - session.createdAt);
   const statusColor = session.attached ? 'green' : 'red';
   const statusText = session.attached ? 'alive' : 'dead';
+  const sessionName = session.name || 'unnamed';
 
   return (
     <Box
@@ -65,6 +67,10 @@ export function StatusBar({ session }: StatusBarProps): React.ReactElement {
     >
       {/* Left side: Session info */}
       <Box>
+        <Text color="cyan" bold>
+          {sessionName}
+        </Text>
+        <Text> | </Text>
         <Text color={statusColor} bold>
           {'\u25CF'} {statusText}
         </Text>
@@ -76,15 +82,17 @@ export function StatusBar({ session }: StatusBarProps): React.ReactElement {
         <Text>
           <Text dimColor>mode:</Text> {session.mode}
         </Text>
-        <Text> | </Text>
-        <Text>
-          <Text dimColor>screen:</Text> {session.screenName}
-        </Text>
+        {inputMode && (
+          <>
+            <Text> | </Text>
+            <Text color="yellow" bold>INPUT MODE</Text>
+          </>
+        )}
       </Box>
 
       {/* Right side: Keyboard hints */}
       <Box>
-        <Text dimColor>? help | Esc back | Ctrl+C exit</Text>
+        <Text dimColor>? help | Esc back | type to send input</Text>
       </Box>
     </Box>
   );
