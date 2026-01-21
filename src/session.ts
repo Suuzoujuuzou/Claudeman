@@ -60,6 +60,77 @@ const FOCUS_ESCAPE_FILTER = /\x1b\[\?1004[hl]|\x1b\[[IO]/g;
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*m/g;
 const TOKEN_PATTERN = /(\d+(?:\.\d+)?)\s*([kKmM])?\s*tokens/;
 
+// ============================================================================
+// Buffer Accumulator (reduces GC pressure from string concatenation)
+// ============================================================================
+
+/**
+ * High-performance buffer accumulator using array-based collection.
+ *
+ * Reduces GC pressure by avoiding repeated string concatenation (`+=`).
+ * Instead, chunks are pushed to an array and joined only when needed.
+ * Automatically trims when size limits are exceeded.
+ */
+class BufferAccumulator {
+  private chunks: string[] = [];
+  private totalLength: number = 0;
+  private readonly maxSize: number;
+  private readonly trimSize: number;
+
+  constructor(maxSize: number, trimSize: number) {
+    this.maxSize = maxSize;
+    this.trimSize = trimSize;
+  }
+
+  /** Append data to the buffer */
+  append(data: string): void {
+    if (!data) return;
+    this.chunks.push(data);
+    this.totalLength += data.length;
+
+    // Trim if exceeded max size
+    if (this.totalLength > this.maxSize) {
+      this.trim();
+    }
+  }
+
+  /** Get the full buffer content (joins all chunks) */
+  get value(): string {
+    if (this.chunks.length === 0) return '';
+    if (this.chunks.length === 1) return this.chunks[0];
+
+    // Consolidate chunks on access
+    const result = this.chunks.join('');
+    this.chunks = [result];
+    return result;
+  }
+
+  /** Get current buffer length without joining */
+  get length(): number {
+    return this.totalLength;
+  }
+
+  /** Clear the buffer */
+  clear(): void {
+    this.chunks = [];
+    this.totalLength = 0;
+  }
+
+  /** Set buffer to a specific value */
+  set(value: string): void {
+    this.chunks = value ? [value] : [];
+    this.totalLength = value?.length || 0;
+  }
+
+  /** Trim buffer to keep only the most recent data */
+  private trim(): void {
+    const full = this.chunks.join('');
+    const trimmed = full.slice(-this.trimSize);
+    this.chunks = [trimmed];
+    this.totalLength = trimmed.length;
+  }
+}
+
 /**
  * Represents a JSON message from Claude CLI's stream-json output format.
  * Messages are newline-delimited JSON objects parsed from PTY output.
@@ -177,9 +248,10 @@ export class Session extends EventEmitter {
   private _pid: number | null = null;
   private _status: SessionStatus = 'idle';
   private _currentTaskId: string | null = null;
-  private _terminalBuffer: string = '';  // Raw terminal output
+  // Use BufferAccumulator for hot-path buffers to reduce GC pressure
+  private _terminalBuffer = new BufferAccumulator(MAX_TERMINAL_BUFFER_SIZE, TERMINAL_BUFFER_TRIM_SIZE);
   private _outputBuffer: string = '';
-  private _textOutput: string = '';
+  private _textOutput = new BufferAccumulator(MAX_TEXT_OUTPUT_SIZE, TEXT_OUTPUT_TRIM_SIZE);
   private _errorBuffer: string = '';
   private _lastActivityAt: number;
   private _claudeSessionId: string | null = null;
@@ -261,7 +333,7 @@ export class Session extends EventEmitter {
   }
 
   get terminalBuffer(): string {
-    return this._terminalBuffer;
+    return this._terminalBuffer.value;
   }
 
   get outputBuffer(): string {
@@ -269,7 +341,7 @@ export class Session extends EventEmitter {
   }
 
   get textOutput(): string {
-    return this._textOutput;
+    return this._textOutput.value;
   }
 
   get errorBuffer(): string {
@@ -422,8 +494,8 @@ export class Session extends EventEmitter {
       mode: this.mode,
       claudeSessionId: this._claudeSessionId,
       totalCost: this._totalCost,
-      textOutput: this._textOutput,
-      terminalBuffer: this._terminalBuffer,
+      textOutput: this._textOutput.value,
+      terminalBuffer: this._terminalBuffer.value,
       messageCount: this._messages.length,
       isWorking: this._isWorking,
       lastPromptTime: this._lastPromptTime,
@@ -479,9 +551,9 @@ export class Session extends EventEmitter {
     }
 
     this._status = 'busy';
-    this._terminalBuffer = '';
+    this._terminalBuffer.clear();
     this._outputBuffer = '';
-    this._textOutput = '';
+    this._textOutput.clear();
     this._errorBuffer = '';
     this._messages = [];
     this._lineBuffer = '';
@@ -521,13 +593,15 @@ export class Session extends EventEmitter {
         if (!isRestoredSession) {
           const checkForPrompt = setInterval(() => {
             // Wait for the prompt character (❯) which means Claude is fully initialized
-            if (this._terminalBuffer.includes('❯') || this._terminalBuffer.includes('\u276f')) {
+            const bufferValue = this._terminalBuffer.value;
+            if (bufferValue.includes('❯') || bufferValue.includes('\u276f')) {
               clearInterval(checkForPrompt);
               // Clean the buffer - remove screen init junk before actual content
               // Strip: cursor movement (\x1b[nA/B/C/D), positioning (\x1b[n;nH),
               // clear screen (\x1b[2J), scroll region (\x1b[n;nr), and whitespace
-              this._terminalBuffer = this._terminalBuffer
-                .replace(/^(\x1b\[\??[\d;]*[A-Za-z]|[\s\r\n])+/, '');
+              this._terminalBuffer.set(
+                bufferValue.replace(/^(\x1b\[\??[\d;]*[A-Za-z]|[\s\r\n])+/, '')
+              );
               // Signal client to refresh
               this.emit('clearTerminal');
             }
@@ -571,13 +645,9 @@ export class Session extends EventEmitter {
         .replace(/\x0c/g, '');  // Remove Ctrl+L
       if (!data) return; // Skip if only filtered sequences
 
-      this._terminalBuffer += data;
+      // BufferAccumulator handles auto-trimming when max size exceeded
+      this._terminalBuffer.append(data);
       this._lastActivityAt = Date.now();
-
-      // Trim buffer if it exceeds max size to prevent memory issues
-      if (this._terminalBuffer.length > MAX_TERMINAL_BUFFER_SIZE) {
-        this._terminalBuffer = this._terminalBuffer.slice(-TERMINAL_BUFFER_TRIM_SIZE);
-      }
 
       this.emit('terminal', data);
       this.emit('output', data);
@@ -650,9 +720,9 @@ export class Session extends EventEmitter {
     }
 
     this._status = 'busy';
-    this._terminalBuffer = '';
+    this._terminalBuffer.clear();
     this._outputBuffer = '';
-    this._textOutput = '';
+    this._textOutput.clear();
     this._errorBuffer = '';
     this._messages = [];
     this._lineBuffer = '';
@@ -694,7 +764,7 @@ export class Session extends EventEmitter {
         if (!isRestoredSession) {
           setTimeout(() => {
             if (this.ptyProcess) {
-              this._terminalBuffer = '';
+              this._terminalBuffer.clear();
               this.ptyProcess.write('clear\n');
             }
           }, 100);
@@ -730,13 +800,9 @@ export class Session extends EventEmitter {
       const data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
       if (!data) return; // Skip if only focus sequences
 
-      this._terminalBuffer += data;
+      // BufferAccumulator handles auto-trimming when max size exceeded
+      this._terminalBuffer.append(data);
       this._lastActivityAt = Date.now();
-
-      // Trim buffer if it exceeds max size
-      if (this._terminalBuffer.length > MAX_TERMINAL_BUFFER_SIZE) {
-        this._terminalBuffer = this._terminalBuffer.slice(-TERMINAL_BUFFER_TRIM_SIZE);
-      }
 
       this.emit('terminal', data);
       this.emit('output', data);
@@ -789,9 +855,9 @@ export class Session extends EventEmitter {
       }
 
       this._status = 'busy';
-      this._terminalBuffer = '';
+      this._terminalBuffer.clear();
       this._outputBuffer = '';
-      this._textOutput = '';
+      this._textOutput.clear();
       this._errorBuffer = '';
       this._messages = [];
       this._lineBuffer = '';
@@ -832,13 +898,9 @@ export class Session extends EventEmitter {
           const data = rawData.replace(FOCUS_ESCAPE_FILTER, '');
           if (!data) return; // Skip if only focus sequences
 
-          this._terminalBuffer += data;
+          // BufferAccumulator handles auto-trimming when max size exceeded
+          this._terminalBuffer.append(data);
           this._lastActivityAt = Date.now();
-
-          // Trim buffer if it exceeds max size to prevent memory issues
-          if (this._terminalBuffer.length > MAX_TERMINAL_BUFFER_SIZE) {
-            this._terminalBuffer = this._terminalBuffer.slice(-TERMINAL_BUFFER_TRIM_SIZE);
-          }
 
           this.emit('terminal', data);
           this.emit('output', data);
@@ -867,12 +929,12 @@ export class Session extends EventEmitter {
           } else if (exitCode !== 0 || (resultMsg && resultMsg.is_error)) {
             this._status = 'error';
             if (this.rejectPromise) {
-              this.rejectPromise(new Error(this._errorBuffer || this._textOutput || 'Process exited with error'));
+              this.rejectPromise(new Error(this._errorBuffer || this._textOutput.value || 'Process exited with error'));
             }
           } else {
             this._status = 'idle';
             if (this.resolvePromise) {
-              this.resolvePromise({ result: this._textOutput || this._terminalBuffer, cost: this._totalCost });
+              this.resolvePromise({ result: this._textOutput.value || this._terminalBuffer.value, cost: this._totalCost });
             }
           }
 
@@ -895,7 +957,7 @@ export class Session extends EventEmitter {
     // Prevent unbounded line buffer growth for very long lines
     if (this._lineBuffer.length > MAX_LINE_BUFFER_SIZE) {
       // Force flush the oversized buffer as text output
-      this._textOutput += this._lineBuffer + '\n';
+      this._textOutput.append(this._lineBuffer + '\n');
       this._lineBuffer = '';
     }
 
@@ -905,7 +967,7 @@ export class Session extends EventEmitter {
         this._lineBufferFlushTimer = null;
         if (this._lineBuffer.length > 0) {
           // Flush partial line as text output
-          this._textOutput += this._lineBuffer;
+          this._textOutput.append(this._lineBuffer);
           this._lineBuffer = '';
         }
       }, LINE_BUFFER_FLUSH_INTERVAL);
@@ -946,7 +1008,7 @@ export class Session extends EventEmitter {
           if (msg.type === 'assistant' && msg.message?.content) {
             for (const block of msg.message.content) {
               if (block.type === 'text' && block.text) {
-                this._textOutput += block.text;
+                this._textOutput.append(block.text);
               }
             }
             // Track tokens from usage
@@ -965,17 +1027,13 @@ export class Session extends EventEmitter {
           }
         } catch {
           // Not JSON, just regular output
-          this._textOutput += line + '\n';
+          this._textOutput.append(line + '\n');
         }
       } else if (trimmed) {
-        this._textOutput += line + '\n';
+        this._textOutput.append(line + '\n');
       }
     }
-
-    // Trim text output buffer for long-running sessions
-    if (this._textOutput.length > MAX_TEXT_OUTPUT_SIZE) {
-      this._textOutput = this._textOutput.slice(-TEXT_OUTPUT_TRIM_SIZE);
-    }
+    // Note: BufferAccumulator auto-trims when max size exceeded
   }
 
   // Parse token count from Claude's status line in interactive mode
@@ -1274,7 +1332,7 @@ export class Session extends EventEmitter {
   }
 
   getOutput(): string {
-    return this._textOutput;
+    return this._textOutput.value;
   }
 
   getError(): string {
@@ -1282,13 +1340,13 @@ export class Session extends EventEmitter {
   }
 
   getTerminalBuffer(): string {
-    return this._terminalBuffer;
+    return this._terminalBuffer.value;
   }
 
   clearBuffers(): void {
-    this._terminalBuffer = '';
+    this._terminalBuffer.clear();
     this._outputBuffer = '';
-    this._textOutput = '';
+    this._textOutput.clear();
     this._errorBuffer = '';
     this._messages = [];
     this._taskTracker.clear();

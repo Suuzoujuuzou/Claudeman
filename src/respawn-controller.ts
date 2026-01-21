@@ -64,6 +64,57 @@ const WHITESPACE_PATTERN = /\s+/g;
  */
 const READY_INDICATOR = '↵ send';
 
+// ========== Buffer Accumulator ==========
+
+/**
+ * High-performance buffer accumulator using array-based collection.
+ * Reduces GC pressure by avoiding repeated string concatenation.
+ */
+class BufferAccumulator {
+  private chunks: string[] = [];
+  private totalLength: number = 0;
+  private readonly maxSize: number;
+  private readonly trimSize: number;
+
+  constructor(maxSize: number, trimSize: number) {
+    this.maxSize = maxSize;
+    this.trimSize = trimSize;
+  }
+
+  append(data: string): void {
+    if (!data) return;
+    this.chunks.push(data);
+    this.totalLength += data.length;
+    if (this.totalLength > this.maxSize) {
+      this.trim();
+    }
+  }
+
+  get value(): string {
+    if (this.chunks.length === 0) return '';
+    if (this.chunks.length === 1) return this.chunks[0];
+    const result = this.chunks.join('');
+    this.chunks = [result];
+    return result;
+  }
+
+  get length(): number {
+    return this.totalLength;
+  }
+
+  clear(): void {
+    this.chunks = [];
+    this.totalLength = 0;
+  }
+
+  private trim(): void {
+    const full = this.chunks.join('');
+    const trimmed = full.slice(-this.trimSize);
+    this.chunks = [trimmed];
+    this.totalLength = trimmed.length;
+  }
+}
+
 // ========== Type Definitions ==========
 
 /**
@@ -264,8 +315,8 @@ export class RespawnController extends EventEmitter {
   /** Timestamp of last terminal activity */
   private lastActivityTime: number = 0;
 
-  /** Buffer for recent terminal output */
-  private terminalBuffer: string = '';
+  /** Buffer for recent terminal output (uses BufferAccumulator to reduce GC pressure) */
+  private terminalBuffer = new BufferAccumulator(MAX_RESPAWN_BUFFER_SIZE, RESPAWN_BUFFER_TRIM_SIZE);
 
   /** Whether a prompt indicator was detected */
   private promptDetected: boolean = false;
@@ -466,12 +517,8 @@ export class RespawnController extends EventEmitter {
    * @param data - Raw terminal output data
    */
   private handleTerminalData(data: string): void {
-    this.terminalBuffer += data;
-
-    // Keep buffer manageable (max 1MB, trim to 512KB)
-    if (this.terminalBuffer.length > MAX_RESPAWN_BUFFER_SIZE) {
-      this.terminalBuffer = this.terminalBuffer.slice(-RESPAWN_BUFFER_TRIM_SIZE);
-    }
+    // BufferAccumulator handles auto-trimming when max size exceeded
+    this.terminalBuffer.append(data);
 
     // Check for the definitive "ready for input" indicator
     const isReady = data.includes(READY_INDICATOR);
@@ -606,7 +653,7 @@ export class RespawnController extends EventEmitter {
    */
   private startMonitoringInit(): void {
     this.setState('monitoring_init');
-    this.terminalBuffer = '';
+    this.terminalBuffer.clear();
     this.workingDetected = false;
     this.log('Monitoring if /init triggered work...');
 
@@ -641,7 +688,7 @@ export class RespawnController extends EventEmitter {
    */
   private sendKickstart(): void {
     this.setState('sending_kickstart');
-    this.terminalBuffer = '';
+    this.terminalBuffer.clear();
 
     this.stepTimer = setTimeout(() => {
       const prompt = this.config.kickstartPrompt!;
@@ -723,7 +770,7 @@ export class RespawnController extends EventEmitter {
    */
   private sendUpdateDocs(): void {
     this.setState('sending_update');
-    this.terminalBuffer = ''; // Clear buffer for fresh detection
+    this.terminalBuffer.clear(); // Clear buffer for fresh detection
 
     this.stepTimer = setTimeout(() => {
       const input = this.config.updatePrompt + '\r';  // \r triggers Enter in Ink/Claude CLI
@@ -742,7 +789,7 @@ export class RespawnController extends EventEmitter {
    */
   private sendClear(): void {
     this.setState('sending_clear');
-    this.terminalBuffer = '';
+    this.terminalBuffer.clear();
 
     this.stepTimer = setTimeout(() => {
       this.log('Sending /clear');
@@ -759,7 +806,7 @@ export class RespawnController extends EventEmitter {
    */
   private sendInit(): void {
     this.setState('sending_init');
-    this.terminalBuffer = '';
+    this.terminalBuffer.clear();
 
     this.stepTimer = setTimeout(() => {
       this.log('Sending /init');
@@ -782,7 +829,7 @@ export class RespawnController extends EventEmitter {
 
     // Go back to watching state for next cycle
     this.setState('watching');
-    this.terminalBuffer = '';
+    this.terminalBuffer.clear();
     this.promptDetected = false;
     this.workingDetected = false;
   }
