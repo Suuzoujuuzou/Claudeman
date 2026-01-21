@@ -1148,6 +1148,9 @@ export class Session extends EventEmitter {
   // Parse token count from Claude's status line in interactive mode
   // Matches patterns like "123.4k tokens", "5234 tokens", "1.2M tokens"
   private parseTokensFromStatusLine(data: string): void {
+    // Quick pre-check: skip expensive regex if "token" not present (performance optimization)
+    if (!data.includes('token')) return;
+
     // Remove ANSI escape codes for cleaner parsing (use pre-compiled pattern)
     const cleanData = data.replace(ANSI_ESCAPE_PATTERN, '');
 

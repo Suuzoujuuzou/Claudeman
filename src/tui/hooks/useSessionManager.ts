@@ -163,19 +163,37 @@ interface SessionManagerState {
   renameSession: (sessionId: string, name: string) => Promise<boolean>;
 }
 
+// Cache for screen -ls output to avoid repeated execSync calls
+let screenListCache = '';
+let screenListCacheTime = 0;
+const SCREEN_CACHE_TTL = 100; // ms
+
 /**
  * Checks if a GNU screen session is currently running.
+ * Uses a 100ms cache to avoid repeated execSync calls when checking multiple sessions.
  *
  * @param screenName - The name of the screen session to check
  * @returns true if the session exists and is alive, false otherwise
  */
 function isScreenAlive(screenName: string): boolean {
-  try {
-    const output = execSync('screen -ls', { encoding: 'utf-8' });
-    return output.includes(screenName);
-  } catch {
-    return false;
+  const now = Date.now();
+
+  // Use cached result if fresh enough
+  if (now - screenListCacheTime > SCREEN_CACHE_TTL) {
+    try {
+      screenListCache = execSync('screen -ls', {
+        encoding: 'utf-8',
+        timeout: 5000, // 5 second timeout to prevent hang
+      });
+      screenListCacheTime = now;
+    } catch {
+      screenListCache = '';
+      screenListCacheTime = now;
+      return false;
+    }
   }
+
+  return screenListCache.includes(screenName);
 }
 
 /**
@@ -519,10 +537,13 @@ export function useSessionManager(): SessionManagerState {
     if (!session) return;
 
     try {
-      // Kill via screen
-      execSync(`screen -S ${session.screenName} -X quit`, { encoding: 'utf-8' });
+      // Kill via screen with timeout to prevent hang
+      execSync(`screen -S ${session.screenName} -X quit`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
     } catch {
-      // May already be dead
+      // May already be dead or timeout
     }
 
     // If this was the active session, select another
@@ -543,9 +564,12 @@ export function useSessionManager(): SessionManagerState {
   const killAllSessions = useCallback(() => {
     for (const session of sessions) {
       try {
-        execSync(`screen -S ${session.screenName} -X quit`, { encoding: 'utf-8' });
+        execSync(`screen -S ${session.screenName} -X quit`, {
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
       } catch {
-        // Ignore
+        // Ignore - may already be dead or timeout
       }
     }
     setActiveSessionId(null);
@@ -582,14 +606,16 @@ export function useSessionManager(): SessionManagerState {
         // Send Enter key
         execSync(`screen -S ${session.screenName} -p 0 -X stuff $'\\015'`, {
           encoding: 'utf-8',
+          timeout: 5000,
         });
       } else {
         execSync(`screen -S ${session.screenName} -p 0 -X stuff '${escaped}'`, {
           encoding: 'utf-8',
+          timeout: 5000,
         });
       }
     } catch {
-      // Input may fail if screen is not ready
+      // Input may fail if screen is not ready or timeout
     }
   }, [sessions]);
 

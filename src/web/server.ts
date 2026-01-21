@@ -1051,15 +1051,24 @@ export class WebServer extends EventEmitter {
     });
 
     session.on('exit', (code) => {
-      this.broadcast('session:exit', { id: session.id, code });
-      this.broadcast('session:updated', session.toDetailedState());
+      // Wrap in try/catch to ensure cleanup always happens
+      try {
+        this.broadcast('session:exit', { id: session.id, code });
+        this.broadcast('session:updated', session.toDetailedState());
+      } catch (err) {
+        console.error(`[Server] Error broadcasting session exit for ${session.id}:`, err);
+      }
 
-      // Clean up respawn controller when session exits (stop + remove listeners)
-      const controller = this.respawnControllers.get(session.id);
-      if (controller) {
-        controller.stop();
-        controller.removeAllListeners();
-        this.respawnControllers.delete(session.id);
+      // Always clean up respawn controller, even if broadcast failed
+      try {
+        const controller = this.respawnControllers.get(session.id);
+        if (controller) {
+          controller.stop();
+          controller.removeAllListeners();
+          this.respawnControllers.delete(session.id);
+        }
+      } catch (err) {
+        console.error(`[Server] Error cleaning up respawn controller for ${session.id}:`, err);
       }
     });
 
@@ -1608,6 +1617,9 @@ export class WebServer extends EventEmitter {
     for (const sessionId of sessionIds) {
       await this.cleanupSession(sessionId, false);
     }
+
+    // Flush state store to prevent data loss from debounced saves
+    this.store.flushAll();
 
     await this.app.close();
   }
