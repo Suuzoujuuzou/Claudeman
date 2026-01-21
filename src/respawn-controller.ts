@@ -1,64 +1,192 @@
+/**
+ * @fileoverview Respawn Controller for autonomous Claude Code session cycling
+ *
+ * The RespawnController manages automatic respawning of Claude Code sessions.
+ * When Claude finishes working (detected by idle prompt), it automatically
+ * cycles through update → clear → init steps to keep the session productive.
+ *
+ * ## State Machine
+ *
+ * ```
+ * WATCHING → SENDING_UPDATE → WAITING_UPDATE → SENDING_CLEAR → WAITING_CLEAR
+ *    ↑                                                               │
+ *    │                                                               ▼
+ *    │         SENDING_INIT → WAITING_INIT → MONITORING_INIT ───────┘
+ *    │                                            │
+ *    │                                            ▼ (if no work triggered)
+ *    └── SENDING_KICKSTART → WAITING_KICKSTART ──┘
+ * ```
+ *
+ * ## Configuration
+ *
+ * - `sendClear`: Whether to send /clear after update (default: true)
+ * - `sendInit`: Whether to send /init after clear (default: true)
+ * - `kickstartPrompt`: Optional prompt if /init doesn't trigger work
+ *
+ * @module respawn-controller
+ */
+
 import { EventEmitter } from 'node:events';
 import { Session } from './session.js';
 
-// Maximum terminal buffer size for respawn controller (1MB)
-const MAX_RESPAWN_BUFFER_SIZE = 1024 * 1024;
-// Keep this much when trimming (512KB)
-const RESPAWN_BUFFER_TRIM_SIZE = 512 * 1024;
-
-// Pre-compiled patterns for performance
-const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[HJKmsu?lh]/g;
-const WHITESPACE_PATTERN = /\s+/g;
-
-// The definitive "ready for input" indicator - when Claude shows a suggestion
-const READY_INDICATOR = '↵ send';
+// ========== Configuration Constants ==========
 
 /**
- * Respawn sequence states
+ * Maximum terminal buffer size for respawn controller.
+ * Buffer is trimmed when this limit is exceeded to prevent memory issues.
+ */
+const MAX_RESPAWN_BUFFER_SIZE = 1024 * 1024; // 1MB
+
+/**
+ * Size to trim buffer to when MAX_RESPAWN_BUFFER_SIZE is exceeded.
+ * Keeps the most recent output for pattern detection.
+ */
+const RESPAWN_BUFFER_TRIM_SIZE = 512 * 1024; // 512KB
+
+// ========== Pre-compiled Regex Patterns ==========
+
+/**
+ * Matches ANSI escape codes for terminal control sequences.
+ * Used to strip formatting before pattern matching.
+ * @deprecated Currently unused but kept for potential future use
+ */
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[HJKmsu?lh]/g;
+
+/**
+ * Matches whitespace sequences for normalization.
+ * @deprecated Currently unused but kept for potential future use
+ */
+const WHITESPACE_PATTERN = /\s+/g;
+
+/**
+ * The definitive "ready for input" indicator.
+ * When Claude shows a suggestion, this appears and indicates idle state.
+ */
+const READY_INDICATOR = '↵ send';
+
+// ========== Type Definitions ==========
+
+/**
+ * Respawn sequence states.
  *
  * The controller cycles through these states:
- * WATCHING → SENDING_UPDATE → WAITING_UPDATE → SENDING_CLEAR → WAITING_CLEAR → SENDING_INIT → WAITING_INIT → MONITORING_INIT → (maybe SENDING_KICKSTART → WAITING_KICKSTART) → WATCHING
+ * ```
+ * WATCHING → SENDING_UPDATE → WAITING_UPDATE →
+ *   SENDING_CLEAR → WAITING_CLEAR →
+ *   SENDING_INIT → WAITING_INIT →
+ *   MONITORING_INIT → (maybe SENDING_KICKSTART → WAITING_KICKSTART) →
+ *   WATCHING (repeat)
+ * ```
+ *
+ * Steps can be skipped via config (`sendClear: false`, `sendInit: false`).
  */
 export type RespawnState =
-  | 'watching'           // Watching for idle, ready to start respawn sequence
-  | 'sending_update'     // About to send the update docs prompt
-  | 'waiting_update'     // Waiting for update to complete
-  | 'sending_clear'      // About to send /clear
-  | 'waiting_clear'      // Waiting for clear to complete
-  | 'sending_init'       // About to send /init
-  | 'waiting_init'       // Waiting for init to complete
-  | 'monitoring_init'    // Monitoring if /init triggered work
-  | 'sending_kickstart'  // About to send kickstart prompt
-  | 'waiting_kickstart'  // Waiting for kickstart to complete
-  | 'stopped';           // Controller stopped
+  /** Watching for idle, ready to start respawn sequence */
+  | 'watching'
+  /** About to send the update docs prompt */
+  | 'sending_update'
+  /** Waiting for update to complete */
+  | 'waiting_update'
+  /** About to send /clear command */
+  | 'sending_clear'
+  /** Waiting for clear to complete */
+  | 'waiting_clear'
+  /** About to send /init command */
+  | 'sending_init'
+  /** Waiting for init to complete */
+  | 'waiting_init'
+  /** Monitoring if /init triggered work */
+  | 'monitoring_init'
+  /** About to send kickstart prompt */
+  | 'sending_kickstart'
+  /** Waiting for kickstart to complete */
+  | 'waiting_kickstart'
+  /** Controller stopped (not running) */
+  | 'stopped';
 
+/**
+ * Configuration options for the RespawnController.
+ */
 export interface RespawnConfig {
-  /** How long to wait after seeing prompt before considering truly idle (ms) */
+  /**
+   * How long to wait after seeing prompt before considering truly idle.
+   * Prevents premature cycling when user is about to type.
+   * @default 10000 (10 seconds)
+   */
   idleTimeoutMs: number;
-  /** The prompt to send for updating docs */
+
+  /**
+   * The prompt to send when updating docs.
+   * Sent at the start of each respawn cycle.
+   * @default 'update all the docs and CLAUDE.md'
+   */
   updatePrompt: string;
-  /** Delay between sending steps (ms) */
+
+  /**
+   * Delay between sending steps (ms).
+   * Gives Claude time to process each command.
+   * @default 1000 (1 second)
+   */
   interStepDelayMs: number;
-  /** Whether to enable respawn loop */
+
+  /**
+   * Whether the respawn loop is enabled.
+   * When false, start() will be a no-op.
+   * @default true
+   */
   enabled: boolean;
-  /** Whether to send /clear after update prompt */
+
+  /**
+   * Whether to send /clear after update prompt completes.
+   * Resets Claude's context for fresh start.
+   * @default true
+   */
   sendClear: boolean;
-  /** Whether to send /init after /clear */
+
+  /**
+   * Whether to send /init after /clear completes.
+   * Re-initializes Claude with CLAUDE.md context.
+   * @default true
+   */
   sendInit: boolean;
-  /** Optional prompt to send if /init doesn't trigger work */
+
+  /**
+   * Optional prompt to send if /init doesn't trigger work.
+   * Used as a fallback when /init completes but Claude doesn't start working.
+   * @default undefined
+   */
   kickstartPrompt?: string;
 }
 
+/**
+ * Events emitted by RespawnController.
+ *
+ * @event stateChanged - Fired when state machine transitions
+ * @event respawnCycleStarted - Fired when a new cycle begins
+ * @event respawnCycleCompleted - Fired when a cycle finishes
+ * @event stepSent - Fired when a command is sent to the session
+ * @event stepCompleted - Fired when a step finishes (ready indicator detected)
+ * @event error - Fired on errors
+ * @event log - Fired for debug logging
+ */
 export interface RespawnEvents {
+  /** State machine transition */
   stateChanged: (state: RespawnState, prevState: RespawnState) => void;
+  /** New respawn cycle started */
   respawnCycleStarted: (cycleNumber: number) => void;
+  /** Respawn cycle finished */
   respawnCycleCompleted: (cycleNumber: number) => void;
+  /** Command sent to session */
   stepSent: (step: string, input: string) => void;
+  /** Step completed (ready indicator detected) */
   stepCompleted: (step: string) => void;
+  /** Error occurred */
   error: (error: Error) => void;
+  /** Debug log message */
   log: (message: string) => void;
 }
 
+/** Default configuration values */
 const DEFAULT_CONFIG: RespawnConfig = {
   idleTimeoutMs: 10000,          // 10 seconds of no activity after prompt
   updatePrompt: 'update all the docs and CLAUDE.md',
@@ -69,29 +197,90 @@ const DEFAULT_CONFIG: RespawnConfig = {
 };
 
 /**
- * RespawnController manages automatic respawning of Claude Code sessions
+ * RespawnController - Automatic session cycling for continuous Claude work.
  *
- * When Claude finishes working (detected by idle prompt), it:
- * 1. Sends an update docs prompt
- * 2. Waits for completion
- * 3. Sends /clear
- * 4. Sends /init
- * 5. Repeats
+ * Monitors a Claude Code session for idle state and automatically cycles
+ * through update → clear → init steps to keep the session productive.
+ *
+ * ## How It Works
+ *
+ * 1. **Idle Detection**: Watches terminal output for `↵ send` indicator
+ * 2. **Update**: Sends configured prompt (e.g., "update all docs")
+ * 3. **Clear**: Sends `/clear` to reset context (optional)
+ * 4. **Init**: Sends `/init` to re-initialize with CLAUDE.md (optional)
+ * 5. **Kickstart**: If /init doesn't trigger work, sends fallback prompt (optional)
+ * 6. **Repeat**: Returns to watching state for next cycle
+ *
+ * ## Idle Detection
+ *
+ * Primary indicator: `↵ send` - Claude's suggestion prompt
+ * Fallback indicators: Various prompt characters (❯, ⏵, etc.)
+ *
+ * Working indicators: Thinking, Writing, spinner characters, etc.
+ *
+ * ## Events
+ *
+ * - `stateChanged`: State machine transition
+ * - `respawnCycleStarted`: New cycle began
+ * - `respawnCycleCompleted`: Cycle finished
+ * - `stepSent`: Command sent to session
+ * - `stepCompleted`: Step finished
+ * - `log`: Debug messages
+ *
+ * @extends EventEmitter
+ * @example
+ * ```typescript
+ * const respawn = new RespawnController(session, {
+ *   updatePrompt: 'continue working on the task',
+ *   idleTimeoutMs: 5000,
+ * });
+ *
+ * respawn.on('respawnCycleCompleted', (cycle) => {
+ *   console.log(`Completed cycle ${cycle}`);
+ * });
+ *
+ * respawn.start();
+ * ```
  */
 export class RespawnController extends EventEmitter {
+  /** The session being controlled */
   private session: Session;
+
+  /** Current configuration */
   private config: RespawnConfig;
+
+  /** Current state machine state */
   private _state: RespawnState = 'stopped';
+
+  /** Timer for idle detection timeout */
   private idleTimer: NodeJS.Timeout | null = null;
+
+  /** Timer for step delays */
   private stepTimer: NodeJS.Timeout | null = null;
+
+  /** Number of completed respawn cycles */
   private cycleCount: number = 0;
+
+  /** Timestamp of last terminal activity */
   private lastActivityTime: number = 0;
+
+  /** Buffer for recent terminal output */
   private terminalBuffer: string = '';
+
+  /** Whether a prompt indicator was detected */
   private promptDetected: boolean = false;
+
+  /** Whether a working indicator was detected */
   private workingDetected: boolean = false;
+
+  /** Reference to terminal event handler (for cleanup) */
   private terminalHandler: ((data: string) => void) | null = null;
 
-  // Terminal patterns - detect when Claude is ready for input
+  /**
+   * Patterns indicating Claude is ready for input.
+   * Primary: `↵ send` (suggestion prompt)
+   * Fallback: Various prompt characters
+   */
   private readonly PROMPT_PATTERNS = [
     '↵ send',   // Suggestion ready to send (strongest indicator of idle)
     '❯',        // Standard prompt
@@ -100,6 +289,11 @@ export class RespawnController extends EventEmitter {
     '> ',       // Fallback
     'tokens',   // The status line shows "X tokens" when at prompt
   ];
+
+  /**
+   * Patterns indicating Claude is actively working.
+   * When detected, resets idle detection.
+   */
   private readonly WORKING_PATTERNS = [
     'Thinking', 'Writing', 'Reading', 'Running', 'Searching',
     'Editing', 'Creating', 'Deleting', 'Analyzing', 'Executing',
@@ -108,24 +302,51 @@ export class RespawnController extends EventEmitter {
     '✻', '✽',  // Activity indicators (spinning star)
   ];
 
+  /**
+   * Creates a new RespawnController.
+   *
+   * @param session - The Session instance to control
+   * @param config - Partial configuration (merged with defaults)
+   */
   constructor(session: Session, config: Partial<RespawnConfig> = {}) {
     super();
     this.session = session;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
+  /**
+   * Get the current state machine state.
+   * @returns Current RespawnState
+   */
   get state(): RespawnState {
     return this._state;
   }
 
+  /**
+   * Get the current respawn cycle count.
+   * Increments each time a new cycle starts.
+   * @returns Number of cycles started
+   */
   get currentCycle(): number {
     return this.cycleCount;
   }
 
+  /**
+   * Check if the controller is currently running.
+   * @returns True if state is not 'stopped'
+   */
   get isRunning(): boolean {
     return this._state !== 'stopped';
   }
 
+  /**
+   * Transition to a new state.
+   * Emits 'stateChanged' event with old and new states.
+   * No-op if already in the target state.
+   *
+   * @param newState - State to transition to
+   * @fires stateChanged
+   */
   private setState(newState: RespawnState): void {
     if (newState === this._state) return;
 
@@ -135,13 +356,27 @@ export class RespawnController extends EventEmitter {
     this.emit('stateChanged', newState, prevState);
   }
 
+  /**
+   * Emit a timestamped log message.
+   * @param message - Log message content
+   * @fires log
+   */
   private log(message: string): void {
     const timestamp = new Date().toISOString();
     this.emit('log', `[${timestamp}] [Respawn] ${message}`);
   }
 
   /**
-   * Start watching the session for idle state
+   * Start watching the session for idle state.
+   *
+   * Begins monitoring terminal output for idle indicators.
+   * When idle is detected, starts the respawn cycle.
+   *
+   * No-op if:
+   * - `config.enabled` is false
+   * - Already running (state !== 'stopped')
+   *
+   * @fires stateChanged - Transitions to 'watching'
    */
   start(): void {
     if (!this.config.enabled) {
@@ -161,7 +396,12 @@ export class RespawnController extends EventEmitter {
   }
 
   /**
-   * Stop the respawn controller
+   * Stop the respawn controller.
+   *
+   * Clears all timers, removes terminal listener, and sets state to 'stopped'.
+   * Safe to call multiple times.
+   *
+   * @fires stateChanged - Transitions to 'stopped'
    */
   stop(): void {
     this.log('Stopping respawn controller');
@@ -174,7 +414,11 @@ export class RespawnController extends EventEmitter {
   }
 
   /**
-   * Pause respawn (keeps listening but won't trigger)
+   * Pause respawn without stopping.
+   *
+   * Clears timers but keeps listening to terminal.
+   * State is preserved; won't trigger idle detection while paused.
+   * Use resume() to continue.
    */
   pause(): void {
     this.log('Pausing respawn');
@@ -183,7 +427,10 @@ export class RespawnController extends EventEmitter {
   }
 
   /**
-   * Resume respawn
+   * Resume respawn after pause.
+   *
+   * If in 'watching' state, immediately checks for idle condition.
+   * Otherwise, continues from current state.
    */
   resume(): void {
     this.log('Resuming respawn');
@@ -192,6 +439,10 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /**
+   * Set up terminal output listener on the session.
+   * Removes any previous listener first to avoid duplicates.
+   */
   private setupTerminalListener(): void {
     // Remove our previous listener if any (don't remove other listeners!)
     if (this.terminalHandler) {
@@ -204,6 +455,16 @@ export class RespawnController extends EventEmitter {
     this.session.on('terminal', this.terminalHandler);
   }
 
+  /**
+   * Process terminal data for idle/working detection.
+   *
+   * 1. Buffers data (with size limit)
+   * 2. Detects working indicators → resets idle
+   * 3. Detects ready indicator → triggers state-specific action
+   * 4. Detects prompt indicators → starts idle timer
+   *
+   * @param data - Raw terminal output data
+   */
   private handleTerminalData(data: string): void {
     this.terminalBuffer += data;
 
@@ -282,7 +543,12 @@ export class RespawnController extends EventEmitter {
     }
   }
 
-  // Step completion handlers - called when ready indicator is detected
+  /**
+   * Handle update step completion.
+   * Called when ready indicator detected in waiting_update state.
+   * Proceeds to clear, init, or completes cycle based on config.
+   * @fires stepCompleted - With step 'update'
+   */
   private checkUpdateComplete(): void {
     this.clearIdleTimer();
     this.log('Update completed (ready indicator)');
@@ -297,6 +563,11 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /**
+   * Handle /clear step completion.
+   * Proceeds to init or completes cycle based on config.
+   * @fires stepCompleted - With step 'clear'
+   */
   private checkClearComplete(): void {
     this.clearIdleTimer();
     this.log('/clear completed (ready indicator)');
@@ -309,6 +580,12 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /**
+   * Handle /init step completion.
+   * If kickstart is configured, monitors for work.
+   * Otherwise completes cycle.
+   * @fires stepCompleted - With step 'init' (if no kickstart)
+   */
   private checkInitComplete(): void {
     this.clearIdleTimer();
     this.log('/init completed (ready indicator)');
@@ -322,6 +599,11 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /**
+   * Start monitoring to see if /init triggered work.
+   * Enters 'monitoring_init' state and waits 3s grace period.
+   * If no work detected, sends kickstart prompt.
+   */
   private startMonitoringInit(): void {
     this.setState('monitoring_init');
     this.terminalBuffer = '';
@@ -337,6 +619,11 @@ export class RespawnController extends EventEmitter {
     }, 3000); // 3 second grace period for /init to trigger work
   }
 
+  /**
+   * Handle monitoring timeout when /init didn't trigger work.
+   * Sends kickstart prompt as fallback.
+   * @fires stepCompleted - With step 'init'
+   */
   private checkMonitoringInitIdle(): void {
     this.clearIdleTimer();
     if (this.stepTimer) {
@@ -348,6 +635,10 @@ export class RespawnController extends EventEmitter {
     this.sendKickstart();
   }
 
+  /**
+   * Send the kickstart prompt to get Claude working.
+   * @fires stepSent - With step 'kickstart'
+   */
   private sendKickstart(): void {
     this.setState('sending_kickstart');
     this.terminalBuffer = '';
@@ -363,6 +654,10 @@ export class RespawnController extends EventEmitter {
     }, this.config.interStepDelayMs);
   }
 
+  /**
+   * Handle kickstart step completion.
+   * @fires stepCompleted - With step 'kickstart'
+   */
   private checkKickstartComplete(): void {
     this.clearIdleTimer();
     this.log('Kickstart completed (ready indicator)');
@@ -370,6 +665,10 @@ export class RespawnController extends EventEmitter {
     this.completeCycle();
   }
 
+  /**
+   * Start the idle detection timer.
+   * After idleTimeoutMs, triggers onIdleDetected if still idle.
+   */
   private startIdleTimer(): void {
     this.clearIdleTimer();
 
@@ -383,6 +682,7 @@ export class RespawnController extends EventEmitter {
     }, this.config.idleTimeoutMs);
   }
 
+  /** Clear the idle detection timer if running */
   private clearIdleTimer(): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
@@ -390,6 +690,7 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /** Clear all timers (idle and step) */
   private clearTimers(): void {
     this.clearIdleTimer();
     if (this.stepTimer) {
@@ -398,6 +699,11 @@ export class RespawnController extends EventEmitter {
     }
   }
 
+  /**
+   * Handle confirmed idle detection.
+   * Starts a new respawn cycle.
+   * @fires respawnCycleStarted
+   */
   private onIdleDetected(): void {
     if (this._state !== 'watching') {
       return;
@@ -411,6 +717,10 @@ export class RespawnController extends EventEmitter {
     this.sendUpdateDocs();
   }
 
+  /**
+   * Send the update docs prompt (first step of cycle).
+   * @fires stepSent - With step 'update'
+   */
   private sendUpdateDocs(): void {
     this.setState('sending_update');
     this.terminalBuffer = ''; // Clear buffer for fresh detection
@@ -426,6 +736,10 @@ export class RespawnController extends EventEmitter {
     }, this.config.interStepDelayMs);
   }
 
+  /**
+   * Send /clear command.
+   * @fires stepSent - With step 'clear'
+   */
   private sendClear(): void {
     this.setState('sending_clear');
     this.terminalBuffer = '';
@@ -439,6 +753,10 @@ export class RespawnController extends EventEmitter {
     }, this.config.interStepDelayMs);
   }
 
+  /**
+   * Send /init command.
+   * @fires stepSent - With step 'init'
+   */
   private sendInit(): void {
     this.setState('sending_init');
     this.terminalBuffer = '';
@@ -453,6 +771,11 @@ export class RespawnController extends EventEmitter {
     }, this.config.interStepDelayMs);
   }
 
+  /**
+   * Complete the current respawn cycle.
+   * Returns to watching state for next cycle.
+   * @fires respawnCycleCompleted
+   */
   private completeCycle(): void {
     this.log(`Respawn cycle #${this.cycleCount} completed`);
     this.emit('respawnCycleCompleted', this.cycleCount);
@@ -464,6 +787,10 @@ export class RespawnController extends EventEmitter {
     this.workingDetected = false;
   }
 
+  /**
+   * Check if already idle and start cycle if so.
+   * Used when resuming from pause.
+   */
   private checkIdleAndMaybeStart(): void {
     // Check if already idle
     const timeSinceActivity = Date.now() - this.lastActivityTime;
@@ -473,7 +800,13 @@ export class RespawnController extends EventEmitter {
   }
 
   /**
-   * Update configuration
+   * Update configuration at runtime.
+   *
+   * Merges provided config with existing config.
+   * Takes effect immediately for new operations.
+   *
+   * @param config - Partial configuration to merge
+   * @fires log - With updated config details
    */
   updateConfig(config: Partial<RespawnConfig>): void {
     this.config = { ...this.config, ...config };
@@ -481,14 +814,26 @@ export class RespawnController extends EventEmitter {
   }
 
   /**
-   * Get current configuration
+   * Get current configuration.
+   * @returns Copy of current config (safe to modify)
    */
   getConfig(): RespawnConfig {
     return { ...this.config };
   }
 
   /**
-   * Get status information
+   * Get comprehensive status information.
+   *
+   * Useful for debugging and monitoring.
+   *
+   * @returns Status object with:
+   *   - state: Current state machine state
+   *   - cycleCount: Number of cycles started
+   *   - lastActivityTime: Timestamp of last activity
+   *   - timeSinceActivity: Milliseconds since last activity
+   *   - promptDetected: Whether prompt indicator seen
+   *   - workingDetected: Whether working indicator seen
+   *   - config: Current configuration
    */
   getStatus() {
     return {

@@ -1,3 +1,18 @@
+/**
+ * @fileoverview Inner Loop Tracker for Ralph Wiggum detection
+ *
+ * This module parses terminal output from Claude Code sessions to detect:
+ * - Ralph Wiggum loop state (active, completion phrase, iteration count)
+ * - Todo list items from the TodoWrite tool
+ * - Completion phrases signaling loop completion
+ *
+ * The tracker is DISABLED by default and auto-enables when Ralph-related
+ * patterns are detected in the output stream, reducing overhead for
+ * sessions not using autonomous loops.
+ *
+ * @module inner-loop-tracker
+ */
+
 import { EventEmitter } from 'node:events';
 import {
   InnerLoopState,
@@ -6,111 +21,275 @@ import {
   createInitialInnerLoopState,
 } from './types.js';
 
-// Maximum number of todo items to track per session
+// ========== Configuration Constants ==========
+
+/**
+ * Maximum number of todo items to track per session.
+ * Older items are removed when this limit is reached.
+ */
 const MAX_TODO_ITEMS = 50;
-// Todo items older than this will be auto-expired (1 hour)
+
+/**
+ * Todo items older than this duration (in milliseconds) will be auto-expired.
+ * Default: 1 hour (60 * 60 * 1000)
+ */
 const TODO_EXPIRY_MS = 60 * 60 * 1000;
-// Throttle cleanup checks (every 30 seconds)
+
+/**
+ * Minimum interval between cleanup checks (in milliseconds).
+ * Prevents running cleanup on every data chunk.
+ * Default: 30 seconds
+ */
 const CLEANUP_THROTTLE_MS = 30 * 1000;
 
-// Pre-compiled regex patterns for performance (avoid re-compilation on each call)
+// ========== Pre-compiled Regex Patterns ==========
+// Pre-compiled for performance (avoid re-compilation on each call)
 
-// Completion phrase detection: <promise>PHRASE</promise>
+/**
+ * Matches completion phrase tags: `<promise>PHRASE</promise>`
+ * Used to detect when Claude signals task completion.
+ * Capture group 1: The completion phrase text
+ */
 const PROMISE_PATTERN = /<promise>([^<]+)<\/promise>/;
 
-// Todo item patterns - multiple formats Claude Code uses
-// Format 1: Checkbox format in markdown: "- [ ] Task" or "- [x] Task"
+// ---------- Todo Item Patterns ----------
+// Claude Code outputs todos in multiple formats; we detect all of them
+
+/**
+ * Format 1: Markdown checkbox format
+ * Matches: "- [ ] Task" or "- [x] Task" (also with * bullet)
+ * Capture group 1: Checkbox state ('x', 'X', or ' ')
+ * Capture group 2: Task content
+ */
 const TODO_CHECKBOX_PATTERN = /^[-*]\s*\[([xX ])\]\s+(.+)$/gm;
-// Format 2: Todo with indicator icons: "Todo: ☐ Task", "Todo: ◐ Task", "Todo: ✓ Task"
+
+/**
+ * Format 2: Todo with indicator icons
+ * Matches: "Todo: ☐ Task", "Todo: ◐ Task", "Todo: ✓ Task"
+ * Capture group 1: Status icon
+ * Capture group 2: Task content
+ */
 const TODO_INDICATOR_PATTERN = /Todo:\s*(☐|◐|✓|⏳|✅|⌛|🔄)\s+(.+)/g;
-// Format 3: Status in parentheses: "(pending)", "(in_progress)", "(completed)"
+
+/**
+ * Format 3: Status in parentheses
+ * Matches: "- Task (pending)", "- Task (in_progress)", "- Task (completed)"
+ * Capture group 1: Task content
+ * Capture group 2: Status string
+ */
 const TODO_STATUS_PATTERN = /[-*]\s*(.+?)\s+\((pending|in_progress|completed)\)/g;
-// Format 4: Claude Code native TodoWrite output: "☐ Task", "☒ Task", "◐ Task"
-// These appear in terminal with optional leading whitespace/brackets like "⎿  ☐ Task"
-// Matches: start of line with optional whitespace/bracket, then checkbox, then task text
+
+/**
+ * Format 4: Claude Code native TodoWrite output
+ * Matches: "☐ Task", "☒ Task", "◐ Task"
+ * These appear with optional leading whitespace/brackets like "⎿  ☐ Task"
+ * Capture group 1: Checkbox icon (☐=pending, ☒=completed, ◐=in_progress)
+ * Capture group 2: Task content (min 3 chars, excludes checkbox icons)
+ */
 const TODO_NATIVE_PATTERN = /^[\s⎿]*(☐|☒|◐)\s+([^☐☒◐\n]{3,})/gm;
 
-// Patterns to exclude from todo detection (tool invocations, etc.)
+/**
+ * Patterns to exclude from todo detection
+ * Prevents false positives from tool invocations and Claude commentary
+ */
 const TODO_EXCLUDE_PATTERNS = [
   /^(?:Bash|Search|Read|Write|Glob|Grep|Edit|Task)\s*\(/i,  // Tool invocations
-  /^(?:I'll |Let me |Now I|First,|Task \d+:|Result:|Error:)/i,  // Claude commentary (with context)
+  /^(?:I'll |Let me |Now I|First,|Task \d+:|Result:|Error:)/i,  // Claude commentary
   /^\S+\([^)]+\)$/,                                          // Generic function call pattern
 ];
 
-// Loop status patterns (does NOT include <promise> - that's handled by PROMISE_PATTERN)
+// ---------- Loop Status Patterns ----------
+// Note: <promise> tags are handled separately by PROMISE_PATTERN
+
+/**
+ * Matches generic loop start messages
+ * Examples: "Loop started at", "Starting main loop", "Ralph loop started"
+ */
 const LOOP_START_PATTERN = /Loop started at|Starting.*loop|Ralph loop started/i;
+
+/**
+ * Matches elapsed time output
+ * Example: "Elapsed: 2.5 hours"
+ * Capture group 1: Hours as decimal number
+ */
 const ELAPSED_TIME_PATTERN = /Elapsed:\s*(\d+(?:\.\d+)?)\s*hours?/i;
+
+/**
+ * Matches cycle count indicators (legacy format)
+ * Examples: "cycle #5", "respawn cycle #3"
+ * Capture groups 1 or 2: Cycle number
+ */
 const CYCLE_PATTERN = /cycle\s*#?(\d+)|respawn cycle #(\d+)/i;
 
-// New patterns for improved Ralph detection (based on official Ralph Wiggum plugin)
-// Iteration patterns: "Iteration 5/50", "[5/50]", "iteration #5"
+// ---------- Ralph Wiggum Plugin Patterns ----------
+// Based on the official Ralph Wiggum plugin output format
+
+/**
+ * Matches iteration progress indicators
+ * Examples: "Iteration 5/50", "[5/50]", "iteration #5", "iter. 3 of 10"
+ * Capture groups: (1,2) for "Iteration X/Y" format, (3,4) for "[X/Y]" format
+ */
 const ITERATION_PATTERN = /(?:iteration|iter\.?)\s*#?(\d+)(?:\s*[\/of]\s*(\d+))?|\[(\d+)\/(\d+)\]/i;
 
-// Ralph loop start: "/ralph-loop:ralph-loop" command or "Starting Ralph loop"
-// Pattern matches /ralph-loop anywhere to catch both skill invocations and output
+/**
+ * Matches Ralph loop start command or announcement
+ * Examples: "/ralph-loop:ralph-loop", "Starting Ralph Wiggum loop", "ralph loop beginning"
+ */
 const RALPH_START_PATTERN = /\/ralph-loop|starting ralph(?:\s+wiggum)?\s+loop|ralph loop (?:started|beginning)/i;
 
-// Max iterations: "max-iterations 50" or "maxIterations: 50" or "max_iterations=50"
+/**
+ * Matches max iterations configuration
+ * Examples: "max-iterations 50", "maxIterations: 50", "max_iterations=50"
+ * Capture group 1: Maximum iteration count
+ */
 const MAX_ITERATIONS_PATTERN = /max[_-]?iterations?\s*[=:]\s*(\d+)/i;
 
-// TodoWrite tool output - detect the tool being used
+/**
+ * Matches TodoWrite tool usage indicators
+ * Examples: "TodoWrite", "todos updated", "Todos have been modified"
+ */
 const TODOWRITE_PATTERN = /TodoWrite|todo(?:s)?\s*(?:updated|written|saved)|Todos have been modified/i;
 
-// All tasks complete patterns - detect when Claude says all work is done
-// Includes patterns like "All 8 files have been created", "All tasks completed"
+// ---------- Task Completion Detection Patterns ----------
+
+/**
+ * Matches "all tasks complete" announcements
+ * Examples: "All 8 files have been created", "All tasks completed", "Everything is done"
+ * Used to mark all tracked todos as complete at once
+ */
 const ALL_COMPLETE_PATTERN = /all\s+(?:\d+\s+)?(?:tasks?|files?|items?)\s+(?:have\s+been\s+|are\s+)?(?:completed?|done|finished|created)|completed?\s+all\s+(?:\d+\s+)?tasks?|all\s+done|everything\s+(?:is\s+)?(?:completed?|done)|finished\s+all\s+tasks?/i;
 
-// Pattern to extract count from "All 8 files created" type messages
+/**
+ * Extracts count from "all N items" messages
+ * Example: "All 8 files created" → captures "8"
+ * Capture group 1: The count
+ */
 const ALL_COUNT_PATTERN = /all\s+(\d+)\s+(?:tasks?|files?|items?)/i;
 
-// Individual task completion patterns - detect when Claude marks a specific task done
+/**
+ * Matches individual task completion messages
+ * Examples: "Task #5 is done", "marked as completed", "todo 3 finished"
+ * Used to update specific todo items by number
+ */
 const TASK_DONE_PATTERN = /(?:task|item|todo)\s*(?:#?\d+|"\s*[^"]+\s*")?\s*(?:is\s+)?(?:done|completed?|finished)|(?:completed?|done|finished)\s+(?:task|item)\s*(?:#?\d+)?|marking\s+(?:.*?\s+)?(?:as\s+)?completed?|marked\s+(?:.*?\s+)?(?:as\s+)?completed?/i;
 
-// Generic completion signals (be careful with these - can be false positives)
+/**
+ * Matches generic standalone completion signals
+ * Examples: "Done!", "Completed", "Finished", "All set"
+ * Note: Use with caution - high false positive potential
+ * @deprecated Currently unused due to false positive risk
+ */
 const COMPLETION_SIGNAL_PATTERN = /^(?:done|completed?|finished|all\s+set)!?\s*$/i;
 
-// ANSI escape code removal for cleaner parsing
-// Matches color codes (\x1b[...m), cursor movement (\x1b[...H, \x1b[...C, etc.), and other sequences
+// ---------- Utility Patterns ----------
+
+/**
+ * Removes ANSI escape codes from terminal output for cleaner parsing.
+ * Matches: color codes (\x1b[...m), cursor movement (\x1b[...H, \x1b[...C), etc.
+ */
 const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g;
 
+// ========== Event Types ==========
+
+/**
+ * Events emitted by InnerLoopTracker
+ * @event loopUpdate - Fired when loop state changes (active, iteration, completion phrase)
+ * @event todoUpdate - Fired when todo list changes (items added, status changed)
+ * @event completionDetected - Fired when completion phrase is detected (task complete)
+ * @event enabled - Fired when tracker auto-enables due to Ralph pattern detection
+ */
 export interface InnerLoopTrackerEvents {
+  /** Emitted when loop state changes */
   loopUpdate: (state: InnerLoopState) => void;
+  /** Emitted when todo list is modified */
   todoUpdate: (todos: InnerTodoItem[]) => void;
+  /** Emitted when completion phrase detected (loop finished) */
   completionDetected: (phrase: string) => void;
-  enabled: () => void;  // Emitted when tracker auto-enables
+  /** Emitted when tracker auto-enables from disabled state */
+  enabled: () => void;
 }
 
 /**
- * InnerLoopTracker parses terminal output from Claude Code sessions to detect:
- * 1. Ralph Wiggum loop state (active, completion phrase, cycle count)
- * 2. Todo list items from the TodoWrite tool
+ * InnerLoopTracker - Parses terminal output to detect Ralph Wiggum loops and todos
  *
- * The tracker is DISABLED by default and auto-enables when Ralph-related
+ * This class monitors Claude Code session output to detect:
+ * 1. **Ralph Wiggum loop state** - Active loops, completion phrases, iteration counts
+ * 2. **Todo list items** - From TodoWrite tool in various formats
+ * 3. **Completion signals** - `<promise>PHRASE</promise>` tags
+ *
+ * ## Lifecycle
+ *
+ * The tracker is **DISABLED by default** and auto-enables when Ralph-related
  * patterns are detected (e.g., /ralph-loop:ralph-loop, <promise>, todos).
+ * This reduces overhead for sessions not using autonomous loops.
+ *
+ * ## Completion Detection
+ *
+ * Uses occurrence-based detection to distinguish prompt from actual completion:
+ * - 1st occurrence of `<promise>X</promise>`: Stored as expected phrase (likely in prompt)
+ * - 2nd occurrence: Emits `completionDetected` event (actual completion)
+ * - If loop already active: Emits immediately on first occurrence
+ *
+ * ## Events
+ *
+ * - `loopUpdate` - Loop state changed (status, iteration, phrase)
+ * - `todoUpdate` - Todo list modified (add, status change)
+ * - `completionDetected` - Loop completion phrase detected
+ * - `enabled` - Tracker auto-enabled from disabled state
+ *
+ * @extends EventEmitter
+ * @example
+ * ```typescript
+ * const tracker = new InnerLoopTracker();
+ * tracker.on('completionDetected', (phrase) => {
+ *   console.log('Loop completed with phrase:', phrase);
+ * });
+ * tracker.processTerminalData(ptyOutput);
+ * ```
  */
 export class InnerLoopTracker extends EventEmitter {
+  /** Current state of the detected loop */
   private _loopState: InnerLoopState;
+
+  /** Map of todo items by ID for O(1) lookup */
   private _todos: Map<string, InnerTodoItem> = new Map();
+
+  /** Buffer for incomplete lines from terminal data */
   private _lineBuffer: string = '';
-  // Track occurrences of completion phrases to distinguish prompt from actual completion
+
+  /**
+   * Tracks occurrences of completion phrases.
+   * Used to distinguish prompt echo (1st) from actual completion (2nd+).
+   */
   private _completionPhraseCount: Map<string, number> = new Map();
-  // Throttle cleanup to avoid running on every data chunk
+
+  /** Timestamp of last cleanup check for throttling */
   private _lastCleanupTime: number = 0;
 
+  /**
+   * Creates a new InnerLoopTracker instance.
+   * Starts in disabled state until Ralph patterns are detected.
+   */
   constructor() {
     super();
     this._loopState = createInitialInnerLoopState();
   }
 
   /**
-   * Whether the tracker is enabled and actively monitoring
+   * Whether the tracker is enabled and actively monitoring output.
+   * Disabled by default; auto-enables when Ralph patterns detected.
+   * @returns True if tracker is processing terminal data
    */
   get enabled(): boolean {
     return this._loopState.enabled;
   }
 
   /**
-   * Enable the tracker (called automatically when Ralph patterns detected)
+   * Enable the tracker to start monitoring terminal output.
+   * Called automatically when Ralph patterns are detected.
+   * Emits 'enabled' event when transitioning from disabled state.
+   * @fires enabled
+   * @fires loopUpdate
    */
   enable(): void {
     if (!this._loopState.enabled) {
@@ -122,7 +301,9 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Disable the tracker
+   * Disable the tracker to stop monitoring terminal output.
+   * Terminal data will be ignored until re-enabled.
+   * @fires loopUpdate
    */
   disable(): void {
     if (this._loopState.enabled) {
@@ -133,8 +314,20 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Reset the tracker to initial state (for when a new task/loop starts)
-   * Clears all todos, completion phrase, and loop state while keeping enabled status
+   * Soft reset - clears state but keeps enabled status.
+   * Use when a new task/loop starts within the same session.
+   *
+   * Clears:
+   * - All todo items
+   * - Completion phrase tracking
+   * - Loop state (active, iterations)
+   * - Line buffer
+   *
+   * Preserves:
+   * - Enabled status
+   *
+   * @fires loopUpdate
+   * @fires todoUpdate
    */
   reset(): void {
     const wasEnabled = this._loopState.enabled;
@@ -148,7 +341,11 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Full reset including enabled state (for complete cleanup)
+   * Full reset - clears all state including enabled status.
+   * Use when session is closed or completely cleared.
+   * Returns tracker to initial disabled state.
+   * @fires loopUpdate
+   * @fires todoUpdate
    */
   fullReset(): void {
     this._loopState = createInitialInnerLoopState();
@@ -159,16 +356,39 @@ export class InnerLoopTracker extends EventEmitter {
     this.emit('todoUpdate', this.todos);
   }
 
+  /**
+   * Get a copy of the current loop state.
+   * @returns Shallow copy of loop state (safe to modify)
+   */
   get loopState(): InnerLoopState {
     return { ...this._loopState };
   }
 
+  /**
+   * Get all tracked todo items as an array.
+   * @returns Array of todo items (copy, safe to modify)
+   */
   get todos(): InnerTodoItem[] {
     return Array.from(this._todos.values());
   }
 
   /**
-   * Process raw terminal data to detect inner loop patterns
+   * Process raw terminal data to detect inner loop patterns.
+   *
+   * This is the main entry point for parsing output. Call this with each
+   * chunk of data from the PTY. The tracker will:
+   *
+   * 1. Strip ANSI escape codes
+   * 2. Auto-enable if disabled and Ralph patterns detected
+   * 3. Buffer data and process complete lines
+   * 4. Detect loop status, todos, and completion phrases
+   * 5. Periodically clean up expired todos
+   *
+   * @param data - Raw terminal data (may include ANSI codes)
+   * @fires loopUpdate - When loop state changes
+   * @fires todoUpdate - When todos are detected or updated
+   * @fires completionDetected - When completion phrase found
+   * @fires enabled - When tracker auto-enables
    */
   processTerminalData(data: string): void {
     // Remove ANSI escape codes for cleaner parsing
@@ -203,7 +423,21 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Check if the data contains patterns that should auto-enable the tracker
+   * Check if data contains patterns that should auto-enable the tracker.
+   *
+   * The tracker auto-enables when any of these patterns are detected:
+   * - `/ralph-loop:ralph-loop` command
+   * - `<promise>PHRASE</promise>` completion tags
+   * - TodoWrite tool usage indicators
+   * - Iteration patterns (`Iteration 5/50`, `[5/50]`)
+   * - Todo checkboxes (`- [ ]`, `- [x]`)
+   * - Todo indicator icons (`☐`, `◐`, `☒`)
+   * - Loop start messages (`Loop started at`)
+   * - All tasks complete announcements
+   * - Task completion signals
+   *
+   * @param data - ANSI-cleaned terminal data
+   * @returns True if any Ralph-related pattern is detected
    */
   private shouldAutoEnable(data: string): boolean {
     // Ralph loop command: /ralph-loop:ralph-loop
@@ -264,7 +498,9 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Process a single line of terminal output
+   * Process a single line of terminal output.
+   * Runs all detection methods in sequence.
+   * @param line - Single line of ANSI-cleaned terminal output
    */
   private processLine(line: string): void {
     const trimmed = line.trim();
@@ -287,8 +523,23 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Detect "all tasks complete" messages
-   * When detected: marks all todos as complete AND emits completion event
+   * Detect "all tasks complete" messages.
+   *
+   * When a valid "all complete" message is detected:
+   * 1. Marks all tracked todos as completed
+   * 2. Emits completion event if a completion phrase is set
+   *
+   * Validation criteria:
+   * - Line must match ALL_COMPLETE_PATTERN
+   * - Line must be reasonably short (<100 chars) to avoid matching commentary
+   * - Must not look like prompt text (no "output:" or `<promise>`)
+   * - Must have at least one tracked todo
+   * - If count is mentioned, should roughly match tracked todo count
+   *
+   * @param line - Single line to check
+   * @fires todoUpdate - If any todos marked complete
+   * @fires completionDetected - If completion phrase was set
+   * @fires loopUpdate - If loop state changes
    */
   private detectAllTasksComplete(line: string): void {
     // Only trigger if line is a clear standalone completion message
@@ -365,7 +616,9 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Check for multi-line patterns in the data chunk
+   * Check for multi-line patterns that might span line boundaries.
+   * Completion phrases can be split across PTY chunks.
+   * @param data - The full data chunk (may contain multiple lines)
    */
   private checkMultiLinePatterns(data: string): void {
     // Completion phrase can span lines, so check the whole chunk
@@ -376,8 +629,18 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Detect <promise>PHRASE</promise> completion phrases
-   * Also detects bare phrase (without tags) if we already know the expected phrase
+   * Detect completion phrases in a line.
+   *
+   * Handles two formats:
+   * 1. Tagged: `<promise>PHRASE</promise>` - Processed via handleCompletionPhrase
+   * 2. Bare: Just `PHRASE` - Only if we already know the expected phrase
+   *
+   * Bare phrase detection avoids false positives by requiring:
+   * - The phrase was previously seen in tagged form
+   * - Line is standalone or ends with the phrase
+   * - Line doesn't look like prompt context
+   *
+   * @param line - Single line to check
    */
   private detectCompletionPhrase(line: string): void {
     // First check for tagged phrase: <promise>PHRASE</promise>
@@ -404,9 +667,21 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Handle a bare completion phrase (without tags)
-   * Emits completion if we've already seen the tagged version in the prompt
-   * and this appears to be actual completion output (not prompt echo)
+   * Handle a bare completion phrase (without XML tags).
+   *
+   * Only fires completion if:
+   * 1. The phrase was previously seen in tagged form (from prompt)
+   * 2. This is the first bare occurrence (prevents double-firing)
+   *
+   * When triggered:
+   * - Marks all todos as complete
+   * - Emits completionDetected event
+   * - Sets loop to inactive
+   *
+   * @param phrase - The completion phrase text
+   * @fires todoUpdate - If any todos marked complete
+   * @fires completionDetected - When completion triggered
+   * @fires loopUpdate - When loop state changes
    */
   private handleBareCompletionPhrase(phrase: string): void {
     // Only count if this phrase was already seen in tagged form (from the prompt)
@@ -481,7 +756,13 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Helper: Activate the loop if not already active
+   * Activate the loop if not already active.
+   *
+   * Sets loop state to active and initializes counters.
+   * No-op if loop is already active.
+   *
+   * @returns True if loop was activated, false if already active
+   * @fires loopUpdate - When loop state changes
    */
   private activateLoopIfNeeded(): boolean {
     if (this._loopState.active) return false;
@@ -497,7 +778,19 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Detect loop start and status indicators
+   * Detect loop start and status indicators.
+   *
+   * Patterns detected:
+   * - Ralph loop start commands (`/ralph-loop:ralph-loop`)
+   * - Loop start messages (`Loop started at`, `Starting Ralph loop`)
+   * - Max iterations setting (`max-iterations 50`)
+   * - Iteration progress (`Iteration 5/50`, `[5/50]`)
+   * - Elapsed time (`Elapsed: 2.5 hours`)
+   * - Cycle count (`cycle #5`, `respawn cycle #3`)
+   * - TodoWrite tool usage
+   *
+   * @param line - Single line to check
+   * @fires loopUpdate - When any loop state changes
    */
   private detectLoopStatus(line: string): void {
     // Check for Ralph loop start command (/ralph-loop:ralph-loop)
@@ -562,7 +855,19 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Detect todo items in various formats
+   * Detect todo items in various formats from Claude Code output.
+   *
+   * Supported formats:
+   * - Format 1: Checkbox markdown (`- [ ] Task`, `- [x] Task`)
+   * - Format 2: Indicator icons (`Todo: ☐ Task`, `Todo: ✓ Task`)
+   * - Format 3: Status in parentheses (`- Task (pending)`)
+   * - Format 4: Native TodoWrite (`☐ Task`, `☒ Task`, `◐ Task`)
+   *
+   * Uses quick pre-check to skip lines that can't contain todos.
+   * Excludes tool invocations and Claude commentary patterns.
+   *
+   * @param line - Single line to check
+   * @fires todoUpdate - When any todos are detected or updated
    */
   private detectTodoItems(line: string): void {
     // Quick check: skip lines that can't possibly contain todos
@@ -629,7 +934,15 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Convert todo icon to status
+   * Convert a todo icon character to its corresponding status.
+   *
+   * Icon mappings:
+   * - Completed: `✓`, `✅`, `☒`, `◉`, `●`
+   * - In Progress: `◐`, `⏳`, `⌛`, `🔄`
+   * - Pending: `☐`, `○`, and anything else (default)
+   *
+   * @param icon - Single character icon
+   * @returns Corresponding InnerTodoStatus
    */
   private iconToStatus(icon: string): InnerTodoStatus {
     switch (icon) {
@@ -652,7 +965,17 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Add or update a todo item
+   * Add a new todo item or update an existing one.
+   *
+   * Behavior:
+   * - Content is cleaned (ANSI removed, whitespace collapsed)
+   * - Content under 5 chars is skipped
+   * - ID is generated from normalized content (stable hash)
+   * - Existing item: Updates status and timestamp
+   * - New item: Adds to map, evicts oldest if at MAX_TODO_ITEMS
+   *
+   * @param content - Raw todo content text
+   * @param status - Status to set
    */
   private upsertTodo(content: string, status: InnerTodoStatus): void {
     // Skip empty or whitespace-only content
@@ -693,10 +1016,18 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Normalize todo content for consistent matching
-   * - Collapse multiple whitespace to single space
-   * - Remove trailing garbage characters
-   * - Trim whitespace
+   * Normalize todo content for consistent matching.
+   *
+   * Normalization steps:
+   * 1. Collapse multiple whitespace to single space
+   * 2. Remove special characters (keep alphanumeric + basic punctuation)
+   * 3. Trim whitespace
+   * 4. Convert to lowercase
+   *
+   * This prevents duplicate todos from terminal rendering artifacts.
+   *
+   * @param content - Raw todo content
+   * @returns Normalized lowercase string
    */
   private normalizeTodoContent(content: string): string {
     if (!content) return '';
@@ -708,8 +1039,13 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Generate a stable ID from todo content using djb2 hash
-   * Content is normalized first to prevent duplicates from terminal artifacts
+   * Generate a stable ID from todo content using djb2 hash.
+   *
+   * Uses the djb2 hash algorithm for good distribution across strings.
+   * Content is normalized first to prevent duplicates from terminal artifacts.
+   *
+   * @param content - Todo content text
+   * @returns Stable ID in format `todo-{hash}` (base36 encoded)
    */
   private generateTodoId(content: string): string {
     if (!content) return 'todo-empty';
@@ -728,7 +1064,9 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Find the oldest todo item
+   * Find the todo item with the oldest detectedAt timestamp.
+   * Used for LRU eviction when at MAX_TODO_ITEMS limit.
+   * @returns Oldest todo item, or undefined if map is empty
    */
   private findOldestTodo(): InnerTodoItem | undefined {
     let oldest: InnerTodoItem | undefined;
@@ -741,7 +1079,8 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Throttled cleanup - only runs every CLEANUP_THROTTLE_MS
+   * Conditionally run cleanup, throttled to CLEANUP_THROTTLE_MS.
+   * Prevents cleanup from running on every data chunk (performance).
    */
   private maybeCleanupExpiredTodos(): void {
     const now = Date.now();
@@ -753,7 +1092,9 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Remove expired todo items
+   * Remove todo items older than TODO_EXPIRY_MS.
+   * Emits todoUpdate if any items were removed.
+   * @fires todoUpdate - When expired items are removed
    */
   private cleanupExpiredTodos(): void {
     const now = Date.now();
@@ -774,8 +1115,17 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Mark the loop as started (can be called externally)
-   * Also enables the tracker if not already enabled
+   * Programmatically start a loop (external API).
+   *
+   * Use when starting a loop from outside terminal detection,
+   * such as from a user action or API call.
+   *
+   * Automatically enables the tracker if not already enabled.
+   *
+   * @param completionPhrase - Optional phrase that signals completion
+   * @param maxIterations - Optional maximum iteration count
+   * @fires enabled - If tracker was disabled
+   * @fires loopUpdate - When loop state changes
    */
   startLoop(completionPhrase?: string, maxIterations?: number): void {
     this.enable(); // Ensure tracker is enabled
@@ -792,7 +1142,10 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Update max iterations (can be called externally)
+   * Update the maximum iteration count (external API).
+   *
+   * @param maxIterations - New max iterations, or null to remove limit
+   * @fires loopUpdate - When loop state changes
    */
   setMaxIterations(maxIterations: number | null): void {
     this._loopState.maxIterations = maxIterations;
@@ -801,7 +1154,12 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Mark the loop as stopped
+   * Programmatically stop the loop (external API).
+   *
+   * Sets loop to inactive. Does not disable the tracker
+   * or clear todos - use reset() or clear() for that.
+   *
+   * @fires loopUpdate - When loop state changes
    */
   stopLoop(): void {
     this._loopState.active = false;
@@ -810,8 +1168,13 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Clear all state (e.g., when session is cleared)
-   * Resets to disabled state
+   * Clear all state and disable the tracker.
+   *
+   * Use when the session is cleared or closed.
+   * Resets everything to initial disabled state.
+   *
+   * @fires loopUpdate - With initial state
+   * @fires todoUpdate - With empty array
    */
   clear(): void {
     this._loopState = createInitialInnerLoopState(); // This sets enabled: false
@@ -823,7 +1186,13 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Get todo completion stats
+   * Get aggregated statistics about tracked todos.
+   *
+   * @returns Object with counts by status:
+   *   - total: Total number of tracked todos
+   *   - pending: Todos not yet started
+   *   - inProgress: Todos currently in progress
+   *   - completed: Finished todos
    */
   getTodoStats(): { total: number; pending: number; inProgress: number; completed: number } {
     let pending = 0;
@@ -853,7 +1222,15 @@ export class InnerLoopTracker extends EventEmitter {
   }
 
   /**
-   * Restore state from persisted data
+   * Restore tracker state from persisted data.
+   *
+   * Use after loading state from StateStore. Handles backwards
+   * compatibility by defaulting missing `enabled` flag to false.
+   *
+   * Note: Does not emit events (caller should handle if needed).
+   *
+   * @param loopState - Persisted loop state object
+   * @param todos - Persisted todo items array
    */
   restoreState(loopState: InnerLoopState, todos: InnerTodoItem[]): void {
     // Ensure enabled flag exists (backwards compatibility)

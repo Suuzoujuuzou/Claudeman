@@ -1,60 +1,180 @@
+/**
+ * @fileoverview Background Task Tracker for Claude Code sessions
+ *
+ * This module tracks background tasks (subagents) spawned by Claude Code
+ * during session execution. It parses both JSON messages and terminal output
+ * to detect when tasks are created, updated, and completed.
+ *
+ * ## Task Hierarchy
+ *
+ * Tasks can be nested (parent-child relationships) when Claude spawns
+ * a subagent from within another subagent. The tracker maintains a stack
+ * to track nesting and a tree structure for visualization.
+ *
+ * ## Detection Methods
+ *
+ * 1. **JSON Messages**: Parses `tool_use` blocks for Task tool invocations
+ *    and `tool_result` blocks for completion
+ * 2. **Terminal Output**: Fallback pattern matching for launch/complete messages
+ *
+ * @module task-tracker
+ */
+
 import { EventEmitter } from 'node:events';
 
-// Maximum number of completed tasks to keep in memory
+// ========== Configuration Constants ==========
+
+/**
+ * Maximum number of completed tasks to keep in memory.
+ * Oldest completed tasks are removed when this limit is exceeded.
+ */
 const MAX_COMPLETED_TASKS = 100;
 
-// Pre-compiled patterns for performance
+// ========== Pre-compiled Regex Patterns ==========
+
+/**
+ * Patterns that indicate a new task/agent is being launched.
+ * Used as fallback when JSON parsing doesn't capture the launch.
+ * Capture group 1: Agent/task type name
+ */
 const LAUNCH_PATTERNS = [
   /Launching\s+(\w+)\s+agent/i,
   /Starting\s+(\w+)\s+task/i,
   /Spawning\s+(\w+)\s+agent/i,
 ];
+
+/**
+ * Patterns that indicate a task has completed.
+ * Used as fallback when JSON parsing doesn't capture the result.
+ */
 const COMPLETE_PATTERNS = [
   /Task\s+completed/i,
   /Agent\s+finished/i,
   /Background\s+task\s+done/i,
 ];
 
+// ========== Type Definitions ==========
+
 /**
- * Represents a background task spawned by Claude Code
+ * Represents a background task spawned by Claude Code.
+ *
+ * Tasks form a tree structure where a parent task can spawn child tasks.
+ * This enables tracking of nested agent invocations.
  */
 export interface BackgroundTask {
+  /** Unique task identifier (usually the tool_use ID from Claude) */
   id: string;
+
+  /** Parent task ID if this is a nested task, null for root tasks */
   parentId: string | null;
+
+  /** Human-readable description of what the task is doing */
   description: string;
+
+  /** Type of subagent (e.g., 'explore', 'bash', 'general-purpose') */
   subagentType: string;
+
+  /** Current execution status */
   status: 'running' | 'completed' | 'failed';
+
+  /** Timestamp when task was created (milliseconds since epoch) */
   startTime: number;
+
+  /** Timestamp when task finished (milliseconds since epoch) */
   endTime?: number;
+
+  /** Output/result from the task execution */
   output?: string;
+
+  /** IDs of child tasks spawned by this task */
   children: string[];
 }
 
+/**
+ * Events emitted by TaskTracker.
+ *
+ * @event taskCreated - New task detected and added
+ * @event taskUpdated - Task state changed (rarely used)
+ * @event taskCompleted - Task finished successfully
+ * @event taskFailed - Task finished with error
+ */
 export interface TaskTrackerEvents {
+  /** New task created */
   taskCreated: (task: BackgroundTask) => void;
+  /** Task state updated */
   taskUpdated: (task: BackgroundTask) => void;
+  /** Task completed successfully */
   taskCompleted: (task: BackgroundTask) => void;
+  /** Task failed with error */
   taskFailed: (task: BackgroundTask, error: string) => void;
 }
 
 /**
- * TaskTracker parses Claude Code's output to detect and track background tasks.
+ * TaskTracker - Detects and tracks background tasks in Claude Code sessions.
  *
- * Claude Code outputs JSON messages. When it spawns a task via the Task tool,
- * we see tool_use blocks with the task parameters. We track these and match
- * them with tool_result blocks to track completion.
+ * ## How It Works
+ *
+ * Claude Code outputs JSON messages when executing. When it spawns a subagent
+ * via the Task tool, we see:
+ *
+ * 1. `tool_use` block with `name: "Task"` and input parameters
+ * 2. ... task execution output ...
+ * 3. `tool_result` block with the result or error
+ *
+ * The tracker maintains:
+ * - A map of all tasks by ID
+ * - A stack of currently running tasks (for nesting)
+ * - Parent-child relationships between tasks
+ *
+ * ## Usage
+ *
+ * ```typescript
+ * const tracker = new TaskTracker();
+ *
+ * tracker.on('taskCreated', (task) => {
+ *   console.log(`New task: ${task.description}`);
+ * });
+ *
+ * tracker.on('taskCompleted', (task) => {
+ *   console.log(`Task done: ${task.id}`);
+ * });
+ *
+ * // Feed in Claude messages
+ * tracker.processMessage(claudeJsonMessage);
+ *
+ * // Or terminal output as fallback
+ * tracker.processTerminalOutput(ptyData);
+ * ```
+ *
+ * @extends EventEmitter
  */
 export class TaskTracker extends EventEmitter {
+  /** Map of task ID to task object */
   private tasks: Map<string, BackgroundTask> = new Map();
-  private taskStack: string[] = []; // Stack of active task IDs for nesting
+
+  /** Stack of active task IDs for tracking nesting depth */
+  private taskStack: string[] = [];
+
+  /** Pending tool_use blocks waiting for results */
   private pendingToolUses: Map<string, { description: string; subagentType: string; parentId: string | null }> = new Map();
 
+  /**
+   * Creates a new TaskTracker instance.
+   */
   constructor() {
     super();
   }
 
   /**
-   * Process a Claude message to detect task events
+   * Process a Claude JSON message to detect task events.
+   *
+   * Looks for `tool_use` blocks with `name: "Task"` and `tool_result` blocks
+   * to track task lifecycle.
+   *
+   * @param msg - Parsed Claude JSON message object
+   * @fires taskCreated - When a new task is detected
+   * @fires taskCompleted - When a task finishes successfully
+   * @fires taskFailed - When a task finishes with error
    */
   processMessage(msg: any): void {
     if (!msg || !msg.message?.content) return;
@@ -69,9 +189,17 @@ export class TaskTracker extends EventEmitter {
   }
 
   /**
-   * Process raw terminal output to detect task patterns
-   * This is a fallback for when JSON parsing doesn't capture everything
-   * Uses pre-compiled patterns for performance
+   * Process raw terminal output to detect task patterns.
+   *
+   * This is a fallback for when JSON parsing doesn't capture everything.
+   * Uses pre-compiled patterns to detect launch and completion messages.
+   *
+   * Note: May create duplicate tasks in some cases; deduplication is
+   * handled by checking for existing running tasks of the same type.
+   *
+   * @param data - Raw terminal output string
+   * @fires taskCreated - When a launch pattern is matched
+   * @fires taskCompleted - When a complete pattern is matched
    */
   processTerminalOutput(data: string): void {
     // Detect task launch patterns in terminal output
@@ -108,6 +236,13 @@ export class TaskTracker extends EventEmitter {
     }
   }
 
+  /**
+   * Handle a tool_use block for the Task tool.
+   * Creates a new task and pushes it onto the stack.
+   *
+   * @param block - The tool_use content block
+   * @fires taskCreated
+   */
   private handleTaskToolUse(block: any): void {
     const toolUseId = block.id;
     const params = block.input || {};
@@ -146,6 +281,14 @@ export class TaskTracker extends EventEmitter {
     this.emit('taskCreated', task);
   }
 
+  /**
+   * Handle a tool_result block.
+   * Marks the corresponding task as completed or failed.
+   *
+   * @param block - The tool_result content block
+   * @fires taskCompleted - If result is success
+   * @fires taskFailed - If result is error
+   */
   private handleToolResult(block: any): void {
     const toolUseId = block.tool_use_id;
     const task = this.tasks.get(toolUseId);
@@ -216,6 +359,14 @@ export class TaskTracker extends EventEmitter {
     }
   }
 
+  /**
+   * Create a task from terminal pattern detection.
+   * Used as fallback when JSON messages aren't available.
+   *
+   * @param agentType - Type of agent detected
+   * @param context - Terminal context for debugging
+   * @fires taskCreated
+   */
   private createTaskFromTerminal(agentType: string, context: string): void {
     const taskId = `terminal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const parentId = this.taskStack.length > 0 ? this.taskStack[this.taskStack.length - 1] : null;
@@ -243,6 +394,12 @@ export class TaskTracker extends EventEmitter {
     this.emit('taskCreated', task);
   }
 
+  /**
+   * Mark a task as completed.
+   *
+   * @param taskId - ID of task to complete
+   * @fires taskCompleted - If task was running
+   */
   private completeTask(taskId: string): void {
     const task = this.tasks.get(taskId);
     if (task && task.status === 'running') {
@@ -258,6 +415,12 @@ export class TaskTracker extends EventEmitter {
     }
   }
 
+  /**
+   * Get the most recently started running task.
+   * Returns the task at the top of the stack (most nested).
+   *
+   * @returns Most recent running task, or undefined if none
+   */
   private getMostRecentRunningTask(): BackgroundTask | undefined {
     // Return the task at the top of the stack
     if (this.taskStack.length > 0) {
@@ -268,7 +431,12 @@ export class TaskTracker extends EventEmitter {
   }
 
   /**
-   * Get the task tree as a nested structure
+   * Get root-level tasks as a list.
+   *
+   * Child tasks can be accessed via the `children` array on each task.
+   * Use this for displaying a task tree in the UI.
+   *
+   * @returns Array of tasks without parents (root level)
    */
   getTaskTree(): BackgroundTask[] {
     const rootTasks: BackgroundTask[] = [];
@@ -283,21 +451,28 @@ export class TaskTracker extends EventEmitter {
   }
 
   /**
-   * Get all tasks as a flat map
+   * Get all tasks as a flat Map.
+   *
+   * @returns Copy of the internal tasks map (safe to modify)
    */
   getAllTasks(): Map<string, BackgroundTask> {
     return new Map(this.tasks);
   }
 
   /**
-   * Get a specific task by ID
+   * Get a specific task by its ID.
+   *
+   * @param taskId - The task ID to look up
+   * @returns The task if found, undefined otherwise
    */
   getTask(taskId: string): BackgroundTask | undefined {
     return this.tasks.get(taskId);
   }
 
   /**
-   * Get count of currently running tasks
+   * Get the count of currently running tasks.
+   *
+   * @returns Number of tasks with status 'running'
    */
   getRunningCount(): number {
     let count = 0;
@@ -308,7 +483,13 @@ export class TaskTracker extends EventEmitter {
   }
 
   /**
-   * Get summary statistics
+   * Get aggregated statistics about all tracked tasks.
+   *
+   * @returns Object with counts:
+   *   - total: Total number of tracked tasks
+   *   - running: Tasks currently executing
+   *   - completed: Successfully finished tasks
+   *   - failed: Tasks that ended with errors
    */
   getStats(): { total: number; running: number; completed: number; failed: number } {
     let running = 0, completed = 0, failed = 0;
@@ -325,7 +506,10 @@ export class TaskTracker extends EventEmitter {
   }
 
   /**
-   * Clear all tasks (e.g., when session is cleared)
+   * Clear all tracked tasks.
+   *
+   * Use when the session is cleared or closed.
+   * Resets the task map, stack, and pending tool uses.
    */
   clear(): void {
     this.tasks.clear();
