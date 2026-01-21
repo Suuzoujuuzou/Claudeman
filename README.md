@@ -23,6 +23,7 @@ Claudeman transforms Claude Code into an autonomous development powerhouse. Spaw
 - [Token Management](#token-management)
 - [Web Interface](#web-interface)
 - [CLI Commands](#cli-commands)
+- [Screen Manager TUI](#screen-manager-interactive-tui)
 - [API Reference](#api-reference)
 - [Long-Running Sessions](#long-running-sessions)
 - [Troubleshooting](#troubleshooting)
@@ -44,6 +45,7 @@ Claudeman transforms Claude Code into an autonomous development powerhouse. Spaw
 | **Real-time Monitoring** | Track tokens, costs, memory, background tasks |
 | **Session Persistence** | Screen sessions survive server restarts |
 | **Inner Loop Tracking** | Detect Ralph loops running inside Claude Code |
+| **Screen Manager TUI** | Interactive terminal tool for managing screen sessions |
 
 ---
 
@@ -423,6 +425,28 @@ claudeman status
 claudeman reset --force
 ```
 
+### Screen Manager (Interactive TUI)
+
+```bash
+./scripts/screen-manager.sh           # Interactive mode with arrow navigation
+./scripts/screen-manager.sh list      # List all sessions
+./scripts/screen-manager.sh attach 1  # Attach to session #1
+./scripts/screen-manager.sh kill 2,3  # Kill sessions 2 and 3
+./scripts/screen-manager.sh kill 1-5  # Kill sessions 1 through 5
+./scripts/screen-manager.sh kill-all  # Kill all sessions
+./scripts/screen-manager.sh info 1    # Show session #1 details
+```
+
+**Interactive Controls:**
+- `↑`/`↓` or `j`/`k` - Navigate sessions
+- `Enter` - Attach to selected session (Ctrl+A D to detach)
+- `d` - Delete selected session
+- `D` - Delete ALL sessions
+- `i` - Show session info
+- `q`/`Esc` - Quit
+
+Requires `jq` and `screen` packages.
+
 ---
 
 ## API Reference
@@ -539,6 +563,16 @@ curl -X POST localhost:3000/api/sessions/:id/auto-clear \
 4. Increase `idleTimeoutMs` if needed
 
 ### Screen Issues
+
+Use the interactive screen manager for easy session management:
+
+```bash
+./scripts/screen-manager.sh           # Interactive TUI
+./scripts/screen-manager.sh list      # List all sessions
+./scripts/screen-manager.sh kill-all  # Kill all sessions
+```
+
+Or use raw commands:
 
 ```bash
 screen -ls | grep claudeman           # List screens

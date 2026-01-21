@@ -381,17 +381,6 @@ npx agent-browser close
 | POST | `/api/cases` | Create new case |
 | GET | `/api/screens` | List screen sessions with stats |
 
-## CLI Commands (when using `claudeman` globally)
-
-```bash
-claudeman web [-p PORT]              # Start web interface
-claudeman start [--dir PATH]         # Start Claude session
-claudeman list                       # List sessions
-claudeman task add "PROMPT"          # Add task to queue
-claudeman ralph start [--min-hours N] # Start autonomous loop
-claudeman status                     # Overall status
-```
-
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -405,12 +394,6 @@ claudeman status                     # Overall status
 | `Ctrl+?` | Show keyboard shortcuts help |
 | `Escape` | Close panels and modals |
 
-## UI Behaviors
-
-- **Auto-focus**: When only one session exists and none is active, it auto-selects
-- **Scroll preservation**: Expanding/collapsing Ralph panel preserves terminal scroll position
-- **Consistent icons**: Ralph and Monitor panels use same detach/attach icons (⧉/⊞)
-
 ## State Files
 
 | File | Purpose |
@@ -420,6 +403,36 @@ claudeman status                     # Overall status
 | `~/.claudeman/screens.json` | Screen session metadata |
 
 Cases created in `~/claudeman-cases/` by default.
+
+## Screen Session Manager (CLI Tool)
+
+Interactive bash tool for managing claudeman screen sessions directly from the terminal.
+
+```bash
+./scripts/screen-manager.sh          # Interactive mode
+./scripts/screen-manager.sh list     # List all sessions
+./scripts/screen-manager.sh attach 1 # Attach to session #1
+./scripts/screen-manager.sh kill 2,3 # Kill sessions 2 and 3
+./scripts/screen-manager.sh kill-all # Kill all sessions
+./scripts/screen-manager.sh info 1   # Show session #1 details
+```
+
+**Interactive Controls:**
+
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` or `j`/`k` | Navigate sessions |
+| `Enter` | Attach to selected session |
+| `d` | Delete selected session |
+| `D` | Delete ALL sessions |
+| `i` | Show session info |
+| `q`/`Esc` | Quit |
+
+**Features:**
+- Reads from `~/.claudeman/screens.json` (claudeman's authoritative source)
+- Shows session name, running time, alive/dead status, mode
+- Flicker-free navigation (only updates changed rows)
+- Requires `jq` and `screen` to be installed
 
 ## Documentation
 
@@ -432,8 +445,6 @@ Extended documentation is available in the `docs/` directory:
 
 ### Quick Reference: Ralph Wiggum Loops
 
-Ralph Wiggum is an autonomous loop technique that lets Claude work iteratively until completion criteria are met.
-
 **Core Pattern**: `<promise>PHRASE</promise>` - The completion signal that tells the loop to stop.
 
 **Skill Commands**:
@@ -443,31 +454,6 @@ Ralph Wiggum is an autonomous loop technique that lets Claude work iteratively u
 /ralph-loop:help          # Show help and usage
 ```
 
-**Best Practices** (see full guide for details):
-1. **Always set `--max-iterations`** - Safety limit to prevent runaway costs
-2. **Define clear success criteria** - Tests pass, lint clean, specific outputs
-3. **Use test-driven verification** - Built-in feedback loop
-4. **Include escape hatches** - "If stuck after N iterations, document and stop"
-5. **Commit frequently** - Recovery points in git history
-
 **Claudeman Implementation**: The `InnerLoopTracker` class (`src/inner-loop-tracker.ts`) detects Ralph patterns in Claude output and tracks loop state, todos, and completion phrases. It auto-enables when Ralph-related patterns are detected.
 
-**API**:
-- `GET /api/sessions/:id/inner-state` - Loop state and todos
-- `POST /api/sessions/:id/inner-config` - Configure tracker
-
-**SSE Events**:
-- `session:innerLoopUpdate` - Loop state changes
-- `session:innerTodoUpdate` - Todo list updates
-- `session:innerCompletionDetected` - Completion phrase detected
-
-### External References
-
-**Official Anthropic Documentation**:
-- [Claude Code Hooks](https://code.claude.com/docs/en/hooks)
-- [Claude Code Best Practices](https://www.anthropic.com/engineering/claude-code-best-practices)
-- [Ralph Wiggum Plugin](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum)
-
-**Community Resources**:
-- [Awesome Claude - Ralph Wiggum](https://awesomeclaude.ai/ralph-wiggum)
-- [Claude Fast - Autonomous Loops](https://claudefa.st/blog/guide/mechanics/autonomous-agent-loops)
+See [`docs/ralph-wiggum-guide.md`](docs/ralph-wiggum-guide.md) for full documentation on best practices, prompt templates, and troubleshooting.
