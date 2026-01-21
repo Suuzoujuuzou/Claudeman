@@ -26,9 +26,10 @@
  */
 
 import { render } from 'ink';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { createInterface } from 'readline';
-import { App } from './App.js';
+import { App, getPendingAttach, clearPendingAttach } from './App.js';
+import { attachWithTabs, getFullScreenId } from './DirectAttach.js';
 
 /**
  * Checks if the terminal supports raw mode input.
@@ -200,24 +201,99 @@ export async function startTUI(options: TUIOptions = {}): Promise<void> {
   // Clear the terminal for full-screen experience
   process.stdout.write('\x1b[2J\x1b[H');
 
-  const { waitUntilExit, unmount } = render(<App />);
+  // Main TUI loop - allows unmounting for screen attachment and re-rendering
+  let shouldContinue = true;
 
-  // Handle graceful exit on SIGINT/SIGTERM
-  const cleanup = () => {
-    unmount();
-    // Restore terminal state
-    process.stdout.write('\x1b[?25h'); // Show cursor
-    process.stdout.write('\x1b[2J\x1b[H'); // Clear screen
-  };
+  while (shouldContinue) {
+    // Clear any pending attach from previous iteration
+    clearPendingAttach();
 
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+    const { waitUntilExit, unmount } = render(<App />);
 
-  try {
-    await waitUntilExit();
-  } finally {
-    process.off('SIGINT', cleanup);
-    process.off('SIGTERM', cleanup);
-    cleanup();
+    // Handle graceful exit on SIGINT/SIGTERM
+    const cleanup = () => {
+      unmount();
+      // Restore terminal state
+      process.stdout.write('\x1b[?25h'); // Show cursor
+      process.stdout.write('\x1b[2J\x1b[H'); // Clear screen
+    };
+
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+
+    try {
+      await waitUntilExit();
+    } finally {
+      process.off('SIGINT', cleanup);
+      process.off('SIGTERM', cleanup);
+    }
+
+    // Check if we exited to attach to a screen session
+    const pendingAttach = getPendingAttach();
+
+    if (pendingAttach) {
+      // Unmount Ink properly
+      unmount();
+
+      // Restore terminal state after Ink - this is critical for screen to work
+      // Ink leaves stdin in raw mode with event listeners, we need to clean up
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.removeAllListeners();
+      // Pause stdin for clean state - readKeySync uses fs.readSync which works in paused mode
+      process.stdin.pause();
+
+      // Clear terminal and show cursor
+      process.stdout.write('\x1b[?25h'); // Show cursor
+      process.stdout.write('\x1b[2J\x1b[H'); // Clear screen
+
+      // Handle the attachment
+      if (pendingAttach.mode === 'tabs') {
+        // Attach with tab switching between sessions
+        await new Promise<void>((resolve) => {
+          attachWithTabs(pendingAttach.sessions, pendingAttach.index, () => {
+            resolve();
+          });
+        });
+      } else {
+        // Direct attach to single screen
+        const session = pendingAttach.session!;
+        // Get full screen ID (PID.screenName) for unambiguous attachment
+        const fullScreenId = getFullScreenId(session.screenName);
+
+        if (fullScreenId) {
+          console.log(`Attaching to: ${session.screenName}`);
+          console.log('Detach with Ctrl+A D to return to TUI\n');
+
+          spawnSync('screen', ['-x', '-A', fullScreenId], {
+            stdio: 'inherit',
+            env: {
+              ...process.env,
+              TERM: process.env.TERM || 'xterm-256color',
+            },
+          });
+        } else {
+          console.log(`Screen session not found: ${session.screenName}`);
+          console.log('Press any key to continue...');
+          await new Promise<void>((resolve) => {
+            process.stdin.once('data', () => resolve());
+          });
+        }
+      }
+
+      // Clear terminal before returning to TUI
+      process.stdout.write('\x1b[2J\x1b[H');
+
+      // Continue the loop to re-render Ink
+      shouldContinue = true;
+    } else {
+      // Normal exit - user quit the TUI
+      shouldContinue = false;
+      // Final cleanup
+      unmount();
+      process.stdout.write('\x1b[?25h'); // Show cursor
+      process.stdout.write('\x1b[2J\x1b[H'); // Clear screen
+    }
   }
 }

@@ -25,7 +25,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Box, useApp, useInput, useStdout } from 'ink';
-import { spawnSync } from 'child_process';
 import { StartScreen } from './components/StartScreen.js';
 import { TabBar } from './components/TabBar.js';
 import { TerminalView } from './components/TerminalView.js';
@@ -34,6 +33,44 @@ import { HelpOverlay } from './components/HelpOverlay.js';
 import { RalphPanel } from './components/RalphPanel.js';
 import { useSessionManager } from './hooks/useSessionManager.js';
 import type { ScreenSession } from '../types.js';
+
+/**
+ * Pending screen attachment request.
+ * Used to communicate between App component and the entry point.
+ */
+export interface PendingAttach {
+  mode: 'tabs' | 'direct';
+  sessions: ScreenSession[];
+  index: number;
+  session?: ScreenSession;
+}
+
+// Module-level state for pending attachment (shared between App and entry point)
+let pendingAttach: PendingAttach | null = null;
+
+/**
+ * Set a pending screen attachment request.
+ * Called by App when user wants to attach to a screen.
+ */
+export function setPendingAttach(attach: PendingAttach): void {
+  pendingAttach = attach;
+}
+
+/**
+ * Get the current pending attachment request.
+ * Called by entry point after App exits.
+ */
+export function getPendingAttach(): PendingAttach | null {
+  return pendingAttach;
+}
+
+/**
+ * Clear the pending attachment request.
+ * Called by entry point after handling the attachment.
+ */
+export function clearPendingAttach(): void {
+  pendingAttach = null;
+}
 
 type ViewMode = 'start' | 'main';
 
@@ -83,6 +120,7 @@ export function App(): React.ReactElement {
     innerTodos,
     respawnStatus,
     cases,
+    lastUsedCase,
     toggleRespawn,
     renameSession,
   } = useSessionManager();
@@ -106,14 +144,14 @@ export function App(): React.ReactElement {
   useInput((input, key) => {
     // Help overlay takes priority
     if (showHelp) {
-      if (key.escape || input === 'q' || input === '?') {
+      if (key.escape || input === 'q') {
         setShowHelp(false);
       }
       return;
     }
 
-    // Global shortcuts
-    if (input === '?' || (key.ctrl && input === 'h')) {
+    // Global shortcuts - use Ctrl+H for help (? is a normal character)
+    if (key.ctrl && input === 'h') {
       setShowHelp(true);
       return;
     }
@@ -137,17 +175,8 @@ export function App(): React.ReactElement {
 
     // === SESSION SWITCHING SHORTCUTS ===
 
-    // Tab / Shift+Tab to switch sessions (most intuitive)
-    if (key.tab) {
-      if (key.shift) {
-        prevSession();
-      } else {
-        nextSession();
-      }
-      return;
-    }
-
-    // Ctrl+Tab / Ctrl+Shift+Tab (if terminal supports it)
+    // Ctrl+Tab / Ctrl+Shift+Tab for session switching (if terminal supports it)
+    // Plain Tab is sent to the session for auto-complete
     if (key.ctrl && key.tab) {
       if (key.shift) {
         prevSession();
@@ -167,12 +196,13 @@ export function App(): React.ReactElement {
       return;
     }
 
-    // [ and ] for previous/next session (vim-like)
-    if (input === '[' && !key.ctrl && !key.meta) {
+    // Ctrl+[ and Ctrl+] for previous/next session (vim-style, requires Ctrl)
+    // Note: Ctrl+[ is often Escape, so this may not work on all terminals
+    if (key.ctrl && input === '[') {
       prevSession();
       return;
     }
-    if (input === ']' && !key.ctrl && !key.meta) {
+    if (key.ctrl && input === ']') {
       nextSession();
       return;
     }
@@ -238,6 +268,11 @@ export function App(): React.ReactElement {
         sendInput(activeSessionId, '\x7f');
         return;
       }
+      // Tab key - send to session for auto-complete
+      if (key.tab && !key.ctrl) {
+        sendInput(activeSessionId, '\t');
+        return;
+      }
       // Arrow keys - send ANSI escape sequences
       if (key.upArrow) {
         sendInput(activeSessionId, '\x1b[A');
@@ -272,54 +307,95 @@ export function App(): React.ReactElement {
     }
   });
 
+  /**
+   * Select a session and enter direct attach mode with tab bar.
+   * Sets pending attachment and exits Ink so the entry point can handle it.
+   */
   const handleSelectSession = useCallback((session: ScreenSession) => {
-    selectSession(session.sessionId);
-    setViewMode('main');
-  }, [selectSession]);
+    const sessionIndex = sessions.findIndex(s => s.sessionId === session.sessionId);
+    if (sessionIndex === -1) return;
+
+    // Set pending attachment and exit Ink
+    // The entry point will handle the actual screen attachment
+    setPendingAttach({
+      mode: 'tabs',
+      sessions: [...sessions], // Copy to avoid stale reference
+      index: sessionIndex,
+    });
+    exit();
+  }, [sessions, exit]);
 
   const handleCreateSession = useCallback(async (caseName?: string, count?: number, mode: 'claude' | 'shell' = 'claude') => {
-    // Default to 'default' case if no case name provided (like web UI)
     const sessionsToCreate = Math.min(Math.max(count || 1, 1), 20);
     let lastSessionId: string | null = null;
 
-    // Create sessions sequentially to avoid overwhelming the server
+    // Create sessions sequentially
     for (let i = 0; i < sessionsToCreate; i++) {
       const sessionId = await createSession(caseName || 'default', mode);
       if (sessionId) {
         lastSessionId = sessionId;
+        // Wait a moment for screen to be ready
+        await new Promise(resolve => setTimeout(resolve, 500));
+        refreshSessions();
       }
-      // Small delay between session creations to allow server to process
       if (i < sessionsToCreate - 1) {
         await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
 
+    // Refresh to get updated session list
+    await new Promise(resolve => setTimeout(resolve, 200));
+    refreshSessions();
+
+    // Wait for state to update, then attach to the new session
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     if (lastSessionId) {
-      setViewMode('main');
+      // Re-fetch sessions to get the fresh list with the new session
+      // We need to read the screens file directly since state may not have updated yet
+      const { existsSync, readFileSync } = await import('fs');
+      const { homedir } = await import('os');
+      const { join } = await import('path');
+      const screensFile = join(homedir(), '.claudeman', 'screens.json');
+
+      let freshSessions: ScreenSession[] = [];
+      try {
+        if (existsSync(screensFile)) {
+          freshSessions = JSON.parse(readFileSync(screensFile, 'utf-8'));
+        }
+      } catch {
+        freshSessions = sessions;
+      }
+
+      if (freshSessions.length > 0) {
+        const sessionIndex = freshSessions.findIndex(s => s.sessionId === lastSessionId);
+        const targetIndex = sessionIndex >= 0 ? sessionIndex : freshSessions.length - 1;
+
+        // Set pending attachment and exit Ink
+        setPendingAttach({
+          mode: 'tabs',
+          sessions: freshSessions,
+          index: targetIndex,
+        });
+        exit();
+      }
     }
-  }, [createSession]);
+  }, [createSession, refreshSessions, sessions, exit]);
 
   /**
-   * Attach directly to a screen session
-   * This exits the TUI and attaches to GNU screen
+   * Attach directly to a screen session (skipping tab menu).
+   * Sets pending attachment and exits Ink so the entry point can handle it.
    */
   const handleAttachSession = useCallback((session: ScreenSession) => {
-    // Clear screen and restore terminal
-    process.stdout.write('\x1b[2J\x1b[H');
-    console.log(`Attaching to screen: ${session.screenName}`);
-    console.log('Press Ctrl+A D to detach and return to terminal\n');
-
-    // Use spawnSync to attach to screen (inherits stdio)
-    const result = spawnSync('screen', ['-r', session.screenName], {
-      stdio: 'inherit',
+    // Set pending attachment for direct mode and exit Ink
+    setPendingAttach({
+      mode: 'direct',
+      sessions: [...sessions],
+      index: sessions.findIndex(s => s.sessionId === session.sessionId),
+      session: session,
     });
-
-    // After detaching, exit the TUI
-    if (result.status === 0) {
-      console.log('\nDetached from screen. Run "claudeman tui" to return.');
-    }
     exit();
-  }, [exit]);
+  }, [sessions, exit]);
 
   // Render help overlay if shown
   if (showHelp) {
@@ -337,6 +413,7 @@ export function App(): React.ReactElement {
       <StartScreen
         sessions={sessions}
         cases={cases}
+        lastUsedCase={lastUsedCase}
         onSelectSession={handleSelectSession}
         onAttachSession={handleAttachSession}
         onDeleteSession={handleDeleteSession}

@@ -417,7 +417,7 @@ npx agent-browser close
 | GET | `/api/sessions/:id/inner-state` | Get Ralph loop state + todos |
 | POST | `/api/sessions/:id/auto-compact` | Configure auto-compact threshold |
 | POST | `/api/sessions/:id/auto-clear` | Configure auto-clear threshold |
-| POST | `/api/quick-start` | Create case + start session (claude or shell mode) |
+| POST | `/api/quick-start` | Create case + start session. Body: `{mode?: 'claude'\|'shell'}` |
 | GET | `/api/cases` | List available cases |
 | POST | `/api/cases` | Create new case |
 | GET | `/api/screens` | List screen sessions with stats |
@@ -441,9 +441,10 @@ npx agent-browser close
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` | Navigate list |
-| `Enter` | View session in TUI |
-| `a` | Attach directly to screen (full terminal) |
+| `Enter` | Open tab switcher menu, then full-screen attach |
+| `a` | Direct attach (skip tab menu, Ctrl+A D returns to TUI) |
 | `d` | Delete/kill selected session |
+| `D` (Shift+d) | Delete ALL screens & Claude processes |
 | `c` | Switch to cases view |
 | `n` | Quick-start new session |
 | `r` | Refresh list |
@@ -460,18 +461,17 @@ npx agent-browser close
 | `s` | Switch to sessions view |
 | `r` | Refresh list |
 
-**Main View (Session Active):**
+**Tab Switcher Menu (between attaches):**
 | Key | Action |
 |-----|--------|
-| `Tab`/`Shift+Tab` | Next/previous session tab |
-| `Ctrl+1-9` | Go to session N |
-| `[`/`]` | Previous/next session (vim-style) |
-| `Ctrl+N` | New session |
-| `Ctrl+W` | Close current session |
-| `Ctrl+K` | Kill all sessions |
-| `Ctrl+R` | Toggle respawn (Claude sessions only) |
-| `Escape` | Back to start screen |
-| `?` | Toggle help overlay |
+| `1-9` | Select and attach to session N |
+| `Enter` | Attach to current session |
+| `q` / `Esc` | Return to TUI start screen |
+
+**While attached to screen:**
+| Key | Action |
+|-----|--------|
+| `Ctrl+A D` | Detach and return to tab switcher |
 
 ## State Files
 
@@ -539,26 +539,8 @@ See [`docs/ralph-wiggum-guide.md`](docs/ralph-wiggum-guide.md) for full document
 
 ## Optimization Status
 
-Most critical optimizations have been implemented. See `.claude/optimization-todos.md` for details.
+Most critical optimizations implemented. Full details with file:line references in `.claude/optimization-todos.md`.
 
-**Completed:**
-| Area | Implementation |
-|------|----------------|
-| Buffer management | `BufferAccumulator` with auto-trimming |
-| Pre-compiled regex | Module-level patterns with lastIndex resets |
-| Event listener cleanup | `cleanupTrackerListeners()` in session.ts |
-| Event debouncing | 50ms debounce in `inner-loop-tracker.ts` |
-| State update debouncing | 500ms batching in `server.ts` |
-| Regex pre-checks | String.includes() before pattern.test() |
-| Frontend render debouncing | 50-100ms for panels, tabs |
-| CSS containment | `contain` property on terminal, panels, modals |
-| Input batching | 60fps keystroke coalescing |
-| Incremental DOM updates | Session tabs and Ralph todos |
+**Key optimizations**: Buffer auto-trimming, pre-compiled regex with lastIndex resets, event debouncing (50-500ms), CSS containment, 60fps input batching, incremental DOM updates.
 
-**Remaining:**
-| Priority | Area | Files |
-|----------|------|-------|
-| Low | Task lookup optimization | `task-tracker.ts` |
-| Low | Buffer pagination API | `server.ts` |
-
-Run `cat .claude/optimization-todos.md` for the full list with file:line references.
+**Remaining (low priority)**: Task lookup optimization in `task-tracker.ts`, buffer pagination API.

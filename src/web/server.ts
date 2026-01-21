@@ -854,6 +854,23 @@ export class WebServer extends EventEmitter {
         }
         this.broadcast('session:updated', { session: session.toDetailedState() });
 
+        // Save lastUsedCase to settings for TUI/web sync
+        try {
+          const settingsFilePath = join(homedir(), '.claudeman', 'settings.json');
+          let settings: Record<string, unknown> = {};
+          if (existsSync(settingsFilePath)) {
+            settings = JSON.parse(readFileSync(settingsFilePath, 'utf-8'));
+          }
+          settings.lastUsedCase = caseName;
+          const dir = dirname(settingsFilePath);
+          if (!existsSync(dir)) {
+            mkdirSync(dir, { recursive: true });
+          }
+          writeFileSync(settingsFilePath, JSON.stringify(settings, null, 2));
+        } catch {
+          // Non-critical, ignore settings save errors
+        }
+
         return {
           success: true,
           sessionId: session.id,

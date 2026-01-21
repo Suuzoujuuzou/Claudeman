@@ -30,8 +30,8 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: 'Start Screen - Sessions',
     shortcuts: [
       { key: '\u2191/\u2193', description: 'Navigate list' },
-      { key: 'Enter', description: 'View session in TUI' },
-      { key: 'a', description: 'Attach to screen (full terminal)' },
+      { key: 'Enter', description: 'Tab switcher \u2192 full attach' },
+      { key: 'a', description: 'Direct attach (skip tab menu)' },
       { key: 'd', description: 'Delete/kill selected session' },
       { key: 'D (Shift+d)', description: 'Delete ALL screens & Claude processes' },
       { key: 'c', description: 'Switch to cases view' },
@@ -53,27 +53,18 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
-    title: 'Main View - Navigation',
+    title: 'Tab Switcher Menu',
     shortcuts: [
-      { key: 'Ctrl+Tab', description: 'Next session tab' },
-      { key: 'Ctrl+Shift+Tab', description: 'Previous session tab' },
-      { key: 'Ctrl+1-9', description: 'Go to session N' },
-      { key: 'Escape', description: 'Back to start screen' },
-    ],
-  },
-  {
-    title: 'Main View - Session Management',
-    shortcuts: [
-      { key: 'Ctrl+N', description: 'New session' },
-      { key: 'Ctrl+W', description: 'Close current session' },
-      { key: 'Ctrl+K', description: 'Kill all sessions' },
-      { key: 'Ctrl+R', description: 'Toggle respawn (Claude sessions only)' },
+      { key: '1-9', description: 'Select and attach to session N' },
+      { key: 'Enter', description: 'Attach to current session' },
+      { key: 'q/Esc', description: 'Return to TUI start screen' },
+      { key: 'Ctrl+A D', description: '(While attached) Detach to menu' },
     ],
   },
   {
     title: 'General',
     shortcuts: [
-      { key: '?', description: 'Toggle this help' },
+      { key: 'Ctrl+H', description: 'Toggle this help' },
       { key: 'Ctrl+C', description: 'Exit TUI' },
     ],
   },
@@ -126,7 +117,7 @@ export function HelpOverlay({ onClose: _onClose }: HelpOverlayProps): React.Reac
 
       {/* Footer */}
       <Box marginTop={1} borderStyle="single" borderColor="gray" paddingX={1}>
-        <Text dimColor>Press Escape, q, or ? to close</Text>
+        <Text dimColor>Press Escape or q to close</Text>
       </Box>
     </Box>
   );

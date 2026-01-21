@@ -27,6 +27,7 @@ interface CaseInfo {
 interface StartScreenProps {
   sessions: ScreenSession[];
   cases: CaseInfo[];
+  lastUsedCase: string | null;
   onSelectSession: (session: ScreenSession) => void;
   onAttachSession: (session: ScreenSession) => void;
   onDeleteSession: (session: ScreenSession) => void;
@@ -65,6 +66,20 @@ function formatDuration(ms: number): string {
 }
 
 /**
+ * Gets display name for a session (matches web interface logic).
+ * Priority: custom name > directory name (case) > session ID
+ */
+function getSessionName(session: ScreenSession): string {
+  if (session.name) {
+    return session.name;
+  }
+  if (session.workingDir) {
+    return session.workingDir.split('/').pop() || session.workingDir;
+  }
+  return session.sessionId.slice(0, 8);
+}
+
+/**
  * Start screen component for session discovery and selection.
  *
  * @description
@@ -78,6 +93,7 @@ function formatDuration(ms: number): string {
 export function StartScreen({
   sessions,
   cases,
+  lastUsedCase,
   onSelectSession,
   onAttachSession,
   onDeleteSession,
@@ -95,14 +111,19 @@ export function StartScreen({
   const [multiStartCount, setMultiStartCount] = useState('1');
   const [error, setError] = useState<string | null>(null);
 
-  // Reset selection when switching modes
+  // Reset selection when switching modes - default to lastUsedCase for cases view
   useEffect(() => {
-    setSelectedIndex(0);
+    if (mode === 'cases' && lastUsedCase && cases.length > 0) {
+      const lastUsedIndex = cases.findIndex(c => c.name === lastUsedCase);
+      setSelectedIndex(lastUsedIndex >= 0 ? lastUsedIndex : 0);
+    } else {
+      setSelectedIndex(0);
+    }
     setError(null);
     if (mode !== 'multi-start') {
       setMultiStartCount('1');
     }
-  }, [mode]);
+  }, [mode, lastUsedCase, cases]);
 
   // Ensure selectedIndex is valid when list changes
   useEffect(() => {
@@ -396,18 +417,29 @@ export function StartScreen({
     );
   }
 
+  // Get the default case to display (lastUsedCase or first case or 'testcase')
+  const defaultCase = lastUsedCase || (cases.length > 0 ? cases[0].name : 'testcase');
+  const defaultCasePath = cases.find(c => c.name === defaultCase)?.path;
+
   return (
     <Box flexDirection="column" padding={1}>
-      {/* Header */}
+      {/* Header with current case */}
       <Box
         borderStyle="double"
         borderColor="cyan"
         paddingX={2}
         paddingY={1}
-        justifyContent="center"
+        justifyContent="space-between"
       >
         <Text bold color="cyan">
           Claudeman TUI
+        </Text>
+        <Text>
+          <Text color="yellow">Case: </Text>
+          <Text bold color="white">{defaultCase}</Text>
+          {defaultCasePath && (
+            <Text dimColor> ({defaultCasePath.replace(process.env.HOME || '', '~')})</Text>
+          )}
         </Text>
       </Box>
 
@@ -473,7 +505,7 @@ export function StartScreen({
                 const statusColor = session.attached ? 'green' : 'red';
                 const statusIcon = session.attached ? '\u25CF' : '\u25CB';
                 const statusText = session.attached ? 'alive' : 'dead';
-                const name = (session.name || 'unnamed').slice(0, 20);
+                const name = getSessionName(session).slice(0, 20);
                 const isSelected = index === selectedIndex;
 
                 return (

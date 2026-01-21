@@ -892,11 +892,23 @@ class ClaudemanApp {
 
   async loadQuickStartCases(selectCaseName = null) {
     try {
+      // Load settings to get lastUsedCase
+      let lastUsedCase = null;
+      try {
+        const settingsRes = await fetch('/api/settings');
+        if (settingsRes.ok) {
+          const settings = await settingsRes.json();
+          lastUsedCase = settings.lastUsedCase || null;
+        }
+      } catch {
+        // Ignore settings load errors
+      }
+
       // Add cache-busting to ensure fresh data
       const res = await fetch('/api/cases?_t=' + Date.now());
       const cases = await res.json();
       this.cases = cases;
-      console.log('[loadQuickStartCases] Loaded cases:', cases.map(c => c.name));
+      console.log('[loadQuickStartCases] Loaded cases:', cases.map(c => c.name), 'lastUsedCase:', lastUsedCase);
 
       const select = document.getElementById('quickStartCase');
 
@@ -920,8 +932,12 @@ class ClaudemanApp {
       if (selectCaseName) {
         select.value = selectCaseName;
         this.updateDirDisplayForCase(selectCaseName);
+      } else if (lastUsedCase && cases.some(c => c.name === lastUsedCase)) {
+        // Use lastUsedCase if available and exists
+        select.value = lastUsedCase;
+        this.updateDirDisplayForCase(lastUsedCase);
       } else if (cases.length > 0) {
-        // Auto-select first case
+        // Fallback to testcase or first case
         const firstCase = cases.find(c => c.name === 'testcase') || cases[0];
         select.value = firstCase.name;
         this.updateDirDisplayForCase(firstCase.name);

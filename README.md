@@ -265,43 +265,6 @@ claudeman web [-p 8080]             # Start web interface
 claudeman status                    # Show overall status
 ```
 
-### Terminal User Interface (TUI)
-
-Full-featured TUI built with Ink (React for CLI):
-
-```bash
-claudeman tui                       # Launch TUI
-npx tsx src/index.ts tui           # Dev mode
-```
-
-**Start Screen:**
-| Key | Action |
-|-----|--------|
-| `↑`/`↓` | Navigate sessions |
-| `Enter` | View session in TUI |
-| `a` | Attach directly to screen |
-| `d` | Delete session |
-| `n` | New session |
-| `r` | Refresh |
-| `q` | Quit |
-
-**Main View:**
-| Key | Action |
-|-----|--------|
-| `Ctrl+Tab` | Next session |
-| `Ctrl+1-9` | Go to session N |
-| `Ctrl+W` | Close session |
-| `Escape` | Back to start screen |
-| `?` | Show help |
-
-Features:
-- Real-time terminal output (polls screen every 500ms)
-- Tab-based session navigation
-- Direct screen attachment for full interactivity
-- Arrow key navigation with visual selection
-- **Ralph Loop tracking** with live progress panel
-- Respawn status indicator in status bar
-
 ### Screen Manager Script
 
 Interactive bash script for direct screen management:
@@ -447,7 +410,6 @@ npm install
 npx tsx src/index.ts web    # Dev mode (no build needed)
 npm run build               # Production build
 npm test                    # Run test suite
-npm run tui                 # Launch TUI
 npx tsc --noEmit           # Type check
 ```
 

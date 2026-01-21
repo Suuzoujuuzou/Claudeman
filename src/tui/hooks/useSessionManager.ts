@@ -27,12 +27,17 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { existsSync, readFileSync, watchFile, unwatchFile, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
+import { promisify } from 'util';
 import type { ScreenSession, InnerLoopState, InnerTodoItem, InnerSessionState } from '../../types.js';
+
+const execAsync = promisify(exec);
 
 const SCREENS_FILE = join(homedir(), '.claudeman', 'screens.json');
 const INNER_STATE_FILE = join(homedir(), '.claudeman', 'state-inner.json');
-const OUTPUT_POLL_INTERVAL = 500; // Poll terminal output every 500ms
+const SETTINGS_FILE = join(homedir(), '.claudeman', 'settings.json');
+const OUTPUT_POLL_INTERVAL = 300; // Poll terminal output every 300ms (faster refresh)
+const INPUT_BATCH_INTERVAL = 16; // Batch input every 16ms (60fps)
 
 /**
  * Emoji to ASCII replacement map for screen hardcopy output.
@@ -149,6 +154,7 @@ interface SessionManagerState {
   innerTodos: InnerTodoItem[];
   respawnStatus: RespawnStatus | null;
   cases: CaseInfo[];
+  lastUsedCase: string | null;
   refreshSessions: () => void;
   refreshCases: () => Promise<void>;
   selectSession: (sessionId: string) => void;
@@ -203,8 +209,9 @@ function isScreenAlive(screenName: string): boolean {
  * @description
  * Reads ~/.claudeman/screens.json and enriches each session with
  * its current alive/dead status by checking GNU screen.
+ * Dead sessions are filtered out - only alive sessions are returned.
  *
- * @returns Array of screen sessions with updated attached status
+ * @returns Array of alive screen sessions
  */
 function loadSessions(): ScreenSession[] {
   try {
@@ -214,11 +221,13 @@ function loadSessions(): ScreenSession[] {
     const data = readFileSync(SCREENS_FILE, 'utf-8');
     const sessions: ScreenSession[] = JSON.parse(data);
 
-    // Check which sessions are alive
-    return sessions.map((session) => ({
-      ...session,
-      attached: isScreenAlive(session.screenName),
-    }));
+    // Check which sessions are alive and filter out dead ones
+    return sessions
+      .map((session) => ({
+        ...session,
+        attached: isScreenAlive(session.screenName),
+      }))
+      .filter((session) => session.attached);
   } catch {
     return [];
   }
@@ -242,6 +251,28 @@ function loadInnerState(sessionId: string): InnerSessionState | null {
     const data = readFileSync(INNER_STATE_FILE, 'utf-8');
     const allStates = JSON.parse(data) as Record<string, InnerSessionState>;
     return allStates[sessionId] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Loads the last used case name from settings.
+ *
+ * @description
+ * Reads ~/.claudeman/settings.json and returns the lastUsedCase field.
+ * This is used to default the case selection in the TUI to match the web GUI.
+ *
+ * @returns The last used case name or null if not found
+ */
+function loadLastUsedCase(): string | null {
+  try {
+    if (!existsSync(SETTINGS_FILE)) {
+      return null;
+    }
+    const data = readFileSync(SETTINGS_FILE, 'utf-8');
+    const settings = JSON.parse(data) as { lastUsedCase?: string };
+    return settings.lastUsedCase || null;
   } catch {
     return null;
   }
@@ -285,6 +316,7 @@ export function useSessionManager(): SessionManagerState {
   const [innerTodos, setInnerTodos] = useState<InnerTodoItem[]>([]);
   const [respawnStatus, setRespawnStatus] = useState<RespawnStatus | null>(null);
   const [cases, setCases] = useState<CaseInfo[]>([]);
+  const [lastUsedCase, setLastUsedCase] = useState<string | null>(loadLastUsedCase);
   const outputBufferRef = useRef<string>('');
 
   // Load sessions on mount and watch for changes
@@ -387,18 +419,20 @@ export function useSessionManager(): SessionManagerState {
     };
   }, [activeSessionId]);
 
-  // Poll terminal output for active session
+  // Poll terminal output for active session (async for non-blocking)
   useEffect(() => {
     if (!activeSessionId || !activeSession) return;
 
-    const pollOutput = () => {
-      if (!isScreenAlive(activeSession.screenName)) return;
+    let isMounted = true;
+    let pollTimeoutId: NodeJS.Timeout | null = null;
+
+    const pollOutput = async () => {
+      if (!isMounted || !isScreenAlive(activeSession.screenName)) return;
 
       try {
         const hardcopyFile = `/tmp/claudeman-${activeSessionId}-hardcopy`;
-        // Use screen with UTF-8 mode (-U) for proper character handling
-        execSync(`screen -U -S ${activeSession.screenName} -X hardcopy ${hardcopyFile}`, {
-          encoding: 'utf-8',
+        // Use screen with UTF-8 mode (-U) for proper character handling (async)
+        await execAsync(`screen -U -S ${activeSession.screenName} -X hardcopy ${hardcopyFile}`, {
           timeout: 1000,
           env: {
             ...process.env,
@@ -406,7 +440,7 @@ export function useSessionManager(): SessionManagerState {
             LC_ALL: process.env.LC_ALL || 'en_US.UTF-8',
           }
         });
-        if (existsSync(hardcopyFile)) {
+        if (isMounted && existsSync(hardcopyFile)) {
           const rawContent = readFileSync(hardcopyFile, 'utf-8');
           // Sanitize emoji/unicode that screen hardcopy corrupts
           const content = sanitizeHardcopyOutput(rawContent);
@@ -425,16 +459,21 @@ export function useSessionManager(): SessionManagerState {
       } catch {
         // Hardcopy may fail, that's ok
       }
+
+      // Schedule next poll (using timeout instead of interval for async)
+      if (isMounted) {
+        pollTimeoutId = setTimeout(pollOutput, OUTPUT_POLL_INTERVAL);
+      }
     };
 
     // Initial poll
     pollOutput();
 
-    // Set up polling interval
-    const intervalId = setInterval(pollOutput, OUTPUT_POLL_INTERVAL);
-
     return () => {
-      clearInterval(intervalId);
+      isMounted = false;
+      if (pollTimeoutId) {
+        clearTimeout(pollTimeoutId);
+      }
     };
   }, [activeSessionId, activeSession]);
 
@@ -443,8 +482,11 @@ export function useSessionManager(): SessionManagerState {
     setSessions(loadSessions());
   }, []);
 
-  // Refresh cases from API
+  // Refresh cases from API and reload lastUsedCase from settings
   const refreshCases = useCallback(async () => {
+    // Always reload lastUsedCase from settings
+    setLastUsedCase(loadLastUsedCase());
+
     try {
       const response = await fetch('http://localhost:3000/api/cases');
       if (response.ok) {
@@ -467,7 +509,6 @@ export function useSessionManager(): SessionManagerState {
     setActiveSessionId(sessionId);
     setTerminalOutput('');
     outputBufferRef.current = '';
-    // Polling effect will handle fetching output
   }, []);
 
   // Create a new case
@@ -492,45 +533,83 @@ export function useSessionManager(): SessionManagerState {
     }
   }, [refreshCases]);
 
-  // Create new session (optionally with case name and mode)
+  // Create new session with proper naming (w1-casename, w2-casename, etc.)
   const createSession = useCallback(async (caseName?: string, mode: 'claude' | 'shell' = 'claude'): Promise<string | null> => {
-    try {
-      // Use the web API to create a session if server is running
-      const response = await fetch('http://localhost:3000/api/quick-start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseName: caseName || `case-${Date.now()}`, mode }),
-      });
+    const actualCaseName = caseName || 'testcase';
 
-      if (response.ok) {
-        const data = await response.json() as { success?: boolean; sessionId?: string; caseName?: string };
-        if (data.success && data.sessionId) {
-          // Refresh and select new session
-          const sessionId = data.sessionId;
-          setTimeout(() => {
-            refreshSessions();
-            refreshCases();
-            setActiveSessionId(sessionId);
-          }, 500);
-          return sessionId;
+    try {
+      // Get or create the case
+      let caseRes = await fetch(`http://localhost:3000/api/cases/${actualCaseName}`);
+      let caseData = await caseRes.json() as { path?: string };
+
+      // Create case if it doesn't exist
+      if (!caseData.path) {
+        const createCaseRes = await fetch('http://localhost:3000/api/cases', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: actualCaseName, description: '' }),
+        });
+        const createResult = await createCaseRes.json() as { success?: boolean; case?: { path: string } };
+        if (!createResult.success || !createResult.case) {
+          throw new Error('Failed to create case');
+        }
+        caseData = createResult.case;
+      }
+
+      const workingDir = caseData.path;
+      if (!workingDir) throw new Error('Case path not found');
+
+      // Find highest existing w-number across all sessions
+      let startNumber = 1;
+      for (const session of sessions) {
+        const match = session.name?.match(/^w(\d+)-/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num >= startNumber) {
+            startNumber = num + 1;
+          }
         }
       }
 
-      // Fallback: Just report that web server isn't running
+      // Generate session name matching web UI convention
+      const sessionName = `w${startNumber}-${actualCaseName}`;
+
+      // Create session with custom name
+      const createRes = await fetch('http://localhost:3000/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workingDir, name: sessionName, mode }),
+      });
+      const createData = await createRes.json() as { success?: boolean; session?: { id: string } };
+
+      if (!createData.success || !createData.session) {
+        throw new Error('Failed to create session');
+      }
+
+      const sessionId = createData.session.id;
+
+      // Start in the appropriate mode
+      if (mode === 'shell') {
+        await fetch(`http://localhost:3000/api/sessions/${sessionId}/shell`, { method: 'POST' });
+      } else {
+        await fetch(`http://localhost:3000/api/sessions/${sessionId}/interactive`, { method: 'POST' });
+      }
+
+      // Refresh sessions
+      setTimeout(() => {
+        refreshSessions();
+        refreshCases();
+      }, 500);
+
+      return sessionId;
+    } catch (err) {
       setTerminalOutput(
-        'Web server not running. Start it with: claudeman web\n' +
-        'Then use this TUI to manage sessions.'
-      );
-      return null;
-    } catch {
-      setTerminalOutput(
-        'Cannot connect to Claudeman server.\n' +
-        'Start the server with: claudeman web\n' +
-        'Then use this TUI to manage sessions.'
+        `Failed to create session: ${err instanceof Error ? err.message : 'Unknown error'}\n` +
+        'Make sure the web server is running: claudeman web'
       );
       return null;
     }
-  }, [refreshSessions, refreshCases]);
+  }, [sessions, refreshSessions, refreshCases]);
 
   // Kill a session
   const killSession = useCallback((sessionId: string) => {
@@ -631,30 +710,49 @@ export function useSessionManager(): SessionManagerState {
     selectSession(sessions[prevIndex].sessionId);
   }, [sessions, activeSessionId, selectSession]);
 
-  // Send input to a session
+  // Send input to a session directly via screen command (simple, reliable)
   const sendInput = useCallback((sessionId: string, input: string) => {
     const session = sessions.find((s) => s.sessionId === sessionId);
     if (!session || !isScreenAlive(session.screenName)) return;
 
-    try {
-      // Send input via screen stuff command
-      // Escape special characters for shell
-      const escaped = input.replace(/'/g, "'\\''");
+    const screenName = session.screenName;
 
+    try {
       if (input === '\r') {
         // Send Enter key
-        execSync(`screen -S ${session.screenName} -p 0 -X stuff $'\\015'`, {
+        execSync(`screen -S ${screenName} -p 0 -X stuff $'\\015'`, {
           encoding: 'utf-8',
-          timeout: 5000,
+          timeout: 1000,
+        });
+      } else if (input === '\t') {
+        // Send Tab key
+        execSync(`screen -S ${screenName} -p 0 -X stuff $'\\011'`, {
+          encoding: 'utf-8',
+          timeout: 1000,
+        });
+      } else if (input === '\x7f') {
+        // Send Backspace
+        execSync(`screen -S ${screenName} -p 0 -X stuff $'\\177'`, {
+          encoding: 'utf-8',
+          timeout: 1000,
+        });
+      } else if (input.startsWith('\x1b')) {
+        // Send escape sequences (arrows, etc) - use $'...' syntax
+        const escaped = input.replace(/'/g, "'\\''");
+        execSync(`screen -S ${screenName} -p 0 -X stuff $'${escaped.replace(/\x1b/g, '\\033')}'`, {
+          encoding: 'utf-8',
+          timeout: 1000,
         });
       } else {
-        execSync(`screen -S ${session.screenName} -p 0 -X stuff '${escaped}'`, {
+        // Regular character - escape single quotes
+        const escaped = input.replace(/'/g, "'\\''");
+        execSync(`screen -S ${screenName} -p 0 -X stuff '${escaped}'`, {
           encoding: 'utf-8',
-          timeout: 5000,
+          timeout: 1000,
         });
       }
     } catch {
-      // Input may fail if screen is not ready or timeout
+      // Input may fail if screen is not ready - ignore
     }
   }, [sessions]);
 
@@ -716,6 +814,7 @@ export function useSessionManager(): SessionManagerState {
     innerTodos,
     respawnStatus,
     cases,
+    lastUsedCase,
     refreshSessions,
     refreshCases,
     selectSession,

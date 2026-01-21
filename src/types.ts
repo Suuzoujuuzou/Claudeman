@@ -187,6 +187,8 @@ export interface AppConfig {
   stateFilePath: string;
   /** Respawn controller configuration */
   respawn: RespawnConfig;
+  /** Last used case name (for default selection) */
+  lastUsedCase: string | null;
 }
 
 // ========== Output Types ==========
@@ -490,6 +492,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     sendClear: true,               // send /clear after update prompt
     sendInit: true,                // send /init after /clear
   },
+  lastUsedCase: null,
 };
 
 // ========== Inner Loop Tracking Types ==========
